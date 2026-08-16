@@ -5,16 +5,27 @@
 
 node_modules/
 
-# Dados de execução: banco, anexos enviados, contadores do limitador.
-# Anexo de conversa dentro do repositório seria vazamento de dado pessoal
-# pelo git — e git não esquece.
-dados/
-!dados/.gitkeep
+# ==========================================================================
+#  DADOS DE EXECUÇÃO: banco, anexos enviados, contadores do limitador.
+#  Anexo de conversa dentro do repositório seria vazamento de dado pessoal
+#  pelo git — e git não esquece.
+#
+#  ATENÇÃO À BARRA DO COMEÇO. Um padrão `dados/` (sem barra) casa com QUALQUER
+#  pasta chamada `dados`, em qualquer profundidade — e este projeto tem uma
+#  `src/infra/dados/`, onde vivem as migrações e todos os repositórios.
+#
+#  Foi exatamente o que aconteceu no primeiro push: a camada de dados inteira
+#  ficou fora do repositório, e o servidor parou com
+#  "Cannot find module .../src/infra/dados/migrar.js". Um erro que só aparece
+#  do outro lado, depois do clone.
+#
+#  `/dados/*` e não `/dados/`: o git não ENTRA numa pasta excluída, então a
+#  exceção do `.gitkeep` lá dentro nunca valeria e a pasta sumiria do clone.
+#  Excluindo o CONTEÚDO, a exceção funciona e a pasta sobrevive.
+# ==========================================================================
+/dados/*
+!/dados/.gitkeep
 
 # Saída das suítes
 testes/saida/
 *.log
-node_modules/
-dados/
-.env
-testes/saida/

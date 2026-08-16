@@ -41,6 +41,26 @@ Duas guardas no portão, das que só se descobre errando:
 Arquivos novos: `.github/workflows/deploy.yml`, `ci/entregar.sh` (o único
 comando que a chave alcança), `ci/sudoers-lachat` e `ci/hospedeiros.txt`.
 
+### O `.gitignore` que engoliu a camada de dados
+
+O primeiro push subiu o projeto **sem `src/infra/dados/`** — migrações, adaptador
+de banco e todos os repositórios. O servidor parou no clone com
+`Cannot find module .../src/infra/dados/migrar.js`.
+
+A causa é uma regra do git que quase todo mundo aprende assim: **`dados/` sem
+barra no começo casa com qualquer pasta chamada `dados`, em qualquer
+profundidade**. A intenção era excluir a pasta de execução da raiz; o efeito foi
+excluir também a camada de dados do código.
+
+O que torna isso perigoso não é o erro em si — é que ele **não aparece de onde
+se trabalha**. Localmente está tudo lá, os testes passam, o `npm test` fica
+verde. Só quem clona descobre, e "quem clona" é o servidor, no meio de uma
+entrega.
+
+Agora: `/dados/*` (ancorado na raiz, e o `*` porque o git não entra em pasta
+excluída — sem ele a exceção do `.gitkeep` nunca valeria e a pasta sumiria do
+clone). Os `.gitignore` dos sites do parque foram auditados pelo mesmo erro.
+
 ---
 
 ## 0.4.0 — 16/08/2026 · avisar quem não está olhando
