@@ -14,3 +14,7 @@ dados/
 # Saída das suítes
 testes/saida/
 *.log
+node_modules/
+dados/
+.env
+testes/saida/

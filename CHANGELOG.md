@@ -5,6 +5,44 @@ recurso, 3ª para correção. Nenhuma casa para no 9.
 
 ---
 
+## 0.4.1 — 16/08/2026 · entrega automática, e o conector que se atualiza sozinho
+
+O chat passou a ter repositório e pipeline, no mesmo molde dos sites do parque:
+portão de testes → entrega por SSH com chave presa a `command=`.
+
+O que é novo em relação aos sites é o terceiro trabalho: **propagar o conector**.
+
+O chat é um serviço; o conector é um arquivo COPIADO para dentro de cada site.
+Atualizar o serviço não atualiza as cópias — foi assim que a 1.1 corrigiu o
+repasse com prefixo e o BemEstar continuou com a 1.0 até alguém reparar.
+
+A saída óbvia seria o servidor rodar `instalar-em.js --todos` depois de cada
+entrega. **Ela quebra o deploy dos sites**: cada um é um repositório git com o
+`lachat.js` commitado — e tem de estar, senão um clone novo não sobe, porque o
+`require("./lachat")` acontece no boot. Sobrescrever o arquivo no servidor deixa
+a árvore suja, e o `git pull` da entrega seguinte para com "local changes would
+be overwritten".
+
+Então o caminho é outro: quando `conector/lachat.js` muda, o workflow **commita
+o arquivo novo no repositório de cada site** listado em `ci/hospedeiros.txt`.
+Isso dispara o portão daquele site — que é quem sabe se o conector novo quebrou
+algo lá — e a entrega dele leva o conector junto. De quebra, fica um commit com
+data e diff em cada site: "quando o conector daquele cliente mudou?" passa a ter
+resposta.
+
+Duas guardas no portão, das que só se descobre errando:
+
+- **o conector não muda sem subir a versão.** É a versão que faz
+  `instalar-em.js --conferir` saber quem está atrasado; mudar o arquivo sem
+  mexer nela deixa a conferência cega;
+- **nenhum `.sh` com CRLF.** Fim de linha do Windows é invisível no editor e faz
+  o shell do servidor reclamar de um comando que existe.
+
+Arquivos novos: `.github/workflows/deploy.yml`, `ci/entregar.sh` (o único
+comando que a chave alcança), `ci/sudoers-lachat` e `ci/hospedeiros.txt`.
+
+---
+
 ## 0.4.0 — 16/08/2026 · avisar quem não está olhando
 
 Quatro pedidos que pareciam quatro ajustes de interface e eram, no fundo, um só

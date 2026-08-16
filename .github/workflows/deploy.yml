@@ -1,0 +1,223 @@
+# ==========================================================================
+#  Entrega automática — LA Chat
+#
+#  Três trabalhos, e o terceiro é o que resolve o problema do módulo copiado.
+#
+#    1. PROVAR      — as cinco suítes. Vermelha, nada sai daqui.
+#    2. ENTREGAR    — o SERVIÇO do chat, no servidor.
+#    3. PROPAGAR    — o CONECTOR, dentro do repositório de cada site.
+#
+#  ==========================================================================
+#  POR QUE O CONECTOR PRECISA DE UM TRABALHO PRÓPRIO
+#
+#  O chat é um serviço; o conector é um ARQUIVO COPIADO para dentro de cada
+#  site. Atualizar o serviço não atualiza as cópias — foi exatamente assim que
+#  a 1.1 corrigiu o repasse com prefixo e o BemEstar continuou com a 1.0.
+#
+#  A tentação é o servidor resolver: rodar `instalar-em.js --todos` depois de
+#  cada entrega. ISSO QUEBRA O DEPLOY DOS SITES. Cada um é um repositório git
+#  com o `lachat.js` commitado — e tem de estar, senão um clone novo não sobe,
+#  porque o `require("./lachat")` acontece no boot. Sobrescrever o arquivo no
+#  servidor deixa a árvore suja, e o `git pull` da entrega seguinte para com
+#  "local changes would be overwritten".
+#
+#  Então a atualização viaja pelo caminho certo: este workflow commita o
+#  arquivo novo NO REPOSITÓRIO de cada site. Isso dispara o portão de testes
+#  DAQUELE site — que é quem sabe se o conector novo quebrou alguma coisa lá —
+#  e a entrega dele leva o conector junto.
+#
+#  Efeito colateral bem-vindo: fica um commit, com data e diff, em cada site.
+#  "Quando o conector daquele cliente mudou?" passa a ter resposta.
+# ==========================================================================
+name: Provar e entregar
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: entrega-lachat
+  cancel-in-progress: false
+
+jobs:
+  # ======================================================================
+  #  1. PROVAR
+  # ======================================================================
+  provar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Instalar dependências
+        run: npm ci --no-audit --no-fund
+
+      - name: Todo JavaScript compila
+        run: |
+          erros=0
+          while IFS= read -r f; do
+            node --check "$f" || { echo "ERRO de sintaxe: $f"; erros=1; }
+          done < <(find . -name '*.js' -o -name '*.cjs' | grep -v node_modules)
+          exit $erros
+
+      - name: Nenhum script com fim de linha do Windows
+        # CRLF em .sh é invisível no editor e faz o shell do servidor
+        # reclamar de um comando que existe. Já custou uma entrega.
+        run: |
+          if grep -rlU $'\r' --include='*.sh' . | grep -v node_modules; then
+            echo "há .sh com CRLF — converta para LF"; exit 1
+          fi
+
+      - name: Suítes (unidade, integração, tempo real, segurança, e2e)
+        run: npm test
+
+      # O conector é copiado para dentro dos sites; a versão dele é o que
+      # permite saber quem está atrasado. Um commit que muda o arquivo sem
+      # subir a versão torna o `--conferir` cego.
+      - name: A versão do conector subiu junto com o arquivo
+        run: |
+          git fetch --quiet --depth=2 origin ${{ github.event.before || 'HEAD~1' }} 2>/dev/null || true
+          if git diff --quiet HEAD~1 -- conector/lachat.js 2>/dev/null; then
+            echo "conector não mudou — nada a conferir"
+            exit 0
+          fi
+          if git diff HEAD~1 -- conector/lachat.js 2>/dev/null | grep -q '^\+const VERSAO_CONECTOR'; then
+            echo "versão do conector atualizada"
+          else
+            echo "o conector mudou e VERSAO_CONECTOR não subiu — os sites não saberão que estão atrasados"
+            exit 1
+          fi
+
+  # ======================================================================
+  #  2. ENTREGAR o serviço
+  # ======================================================================
+  entregar:
+    needs: provar
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Preparar a chave e o host conhecido
+        env:
+          CHAVE: ${{ secrets.SSH_CHAVE_ENTREGA }}
+          HOST_CONHECIDO: ${{ secrets.SSH_HOST_CONHECIDO }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$CHAVE" > ~/.ssh/id_entrega
+          chmod 600 ~/.ssh/id_entrega
+          # Host FIXADO, não aceito na hora: com StrictHostKeyChecking=no,
+          # qualquer servidor que respondesse no meio do caminho receberia a
+          # conexão — e a chave junto.
+          printf '%s\n' "$HOST_CONHECIDO" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Pedir a entrega
+        env:
+          DESTINO: ${{ secrets.SSH_DESTINO }}
+        run: |
+          set -o pipefail
+          # Nenhum comando é enviado: o servidor ignora o que viesse aqui e
+          # roda o `command=` preso à chave (ci/entregar.sh).
+          ssh -T -i ~/.ssh/id_entrega \
+              -o BatchMode=yes -o ConnectTimeout=20 \
+              -o StrictHostKeyChecking=yes \
+              "$DESTINO" 2>&1 | tee saida-da-entrega.txt
+
+      - name: Guardar o log da entrega
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: log-da-entrega
+          path: saida-da-entrega.txt
+          retention-days: 14
+
+  # ======================================================================
+  #  3. PROPAGAR o conector para os sites
+  # ======================================================================
+  propagar:
+    needs: provar
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: O conector mudou neste push?
+        id: mudou
+        run: |
+          if git diff --quiet HEAD~1 -- conector/lachat.js 2>/dev/null; then
+            echo "sim=nao" >> "$GITHUB_OUTPUT"
+            echo "o conector não mudou — nenhum site precisa de commit"
+          else
+            echo "sim=sim" >> "$GITHUB_OUTPUT"
+            grep -oP 'VERSAO_CONECTOR = "\K[^"]+' conector/lachat.js
+          fi
+
+      - name: Levar o conector a cada site
+        if: steps.mudou.outputs.sim == 'sim'
+        env:
+          # Token com permissão de ESCRITA nos repositórios dos sites.
+          # `GITHUB_TOKEN` não serve: ele só alcança este repositório.
+          TOKEN: ${{ secrets.TOKEN_PARQUE }}
+        run: |
+          set -uo pipefail
+          [ -n "$TOKEN" ] || { echo "falta o segredo TOKEN_PARQUE"; exit 1; }
+
+          VERSAO="$(grep -oP 'VERSAO_CONECTOR = "\K[^"]+' conector/lachat.js)"
+          git config --global user.name  "LA Chat (entrega)"
+          git config --global user.email "entrega@luizaugust.me"
+
+          falhas=0
+          while IFS= read -r repo; do
+            # Linha vazia ou comentário: a lista é comentada de propósito.
+            case "$repo" in ""|\#*) continue;; esac
+            echo "── $repo"
+
+            rm -rf /tmp/site
+            if ! git clone --quiet --depth 1 \
+                 "https://x-access-token:$TOKEN@github.com/$repo.git" /tmp/site; then
+              echo "   ✖ não consegui clonar"; falhas=$((falhas+1)); continue
+            fi
+
+            # O conector vive na RAIZ do site — é o que o `require("./lachat")`
+            # do server.js espera.
+            if [ ! -f /tmp/site/lachat.js ]; then
+              echo "   — não tem o conector instalado; pulei"
+              continue
+            fi
+
+            if cmp -s conector/lachat.js /tmp/site/lachat.js; then
+              echo "   ✔ já está na $VERSAO"
+              continue
+            fi
+
+            cp conector/lachat.js /tmp/site/lachat.js
+            (
+              cd /tmp/site
+              git add lachat.js
+              git commit --quiet -m "Conector do LA Chat → $VERSAO
+
+Atualizado automaticamente pela entrega do LA-Chat.
+O portão de testes deste site é quem decide se ele entra."
+              git push --quiet origin HEAD:main
+            ) || { echo "   ✖ não consegui commitar"; falhas=$((falhas+1)); continue; }
+
+            echo "   ⬆ atualizado para $VERSAO — o pipeline do site assume daqui"
+          done < ci/hospedeiros.txt
+
+          # Um site que falhou NÃO derruba os outros, mas o trabalho fica
+          # vermelho: um conector desatualizado em silêncio é o defeito que
+          # este workflow inteiro existe para evitar.
+          exit $falhas
