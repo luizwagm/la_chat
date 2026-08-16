@@ -1,0 +1,115 @@
+[Unit]
+# ==========================================================================
+#  UMA INSTÂNCIA POR PROJETO — unit de MOLDE do systemd (o `@` no nome)
+#
+#      systemctl start  lachat@bemestar
+#      systemctl status lachat@bordatudo
+#      journalctl -u lachat@bemestar -f
+#
+#  O `%i` abaixo é o nome que vem depois do `@`. Um arquivo, N serviços.
+#
+#  ==========================================================================
+#  POR QUE UMA INSTÂNCIA POR PROJETO, E NÃO UMA PARA TODOS
+#
+#  O chat sabe separar clientes por `contexto` — há teste de segurança para
+#  isso, inclusive no fan-out do tempo real, que é onde o isolamento costuma
+#  vazar. Mas esse isolamento é LÓGICO: um campo conferido em cada consulta.
+#
+#  O que trafega aqui é conversa de equipe de clínica, que fala de paciente.
+#  Para esse conteúdo, "estão no mesmo arquivo, separadas por software" é uma
+#  frase que ninguém quer ter de dizer ao cliente. Com uma instância por
+#  projeto, cada um tem processo, banco e CHAVE próprios: o vazamento entre
+#  clientes deixa de depender de o código estar certo.
+#
+#  O CÓDIGO CONTINUA UM SÓ (/var/www/projetos/LA-Chat). O que se multiplica é
+#  a configuração — e é por isso que atualizar o repositório atualiza todos.
+#
+#  ==========================================================================
+#  A PORTA DE CADA INSTÂNCIA: a do site + 1000
+#
+#      BemEstarClinic  5185  →  chat 6185
+#      Borda Tudo      5193  →  chat 6193
+#
+#  Não é enfeite: olhando o número, sabe-se de quem é a instância. Uma
+#  numeração sequencial (5197, 5198, 5199…) obriga a consultar uma tabela toda
+#  vez — e a tabela desatualiza.
+# ==========================================================================
+Description=LA Chat — instância %i
+Documentation=https://luizaugust.me
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+# `After`, e NÃO `Requires`, para o Postgres: a unit `postgresql.service` do
+# Debian/Ubuntu é uma FACHADA que termina com sucesso quase imediatamente —
+# quem segura o banco é a `postgresql@<versão>-main`. Um `Requires` daria falsa
+# garantia e derrubaria o chat numa manutenção do banco. E o chat padrão nem
+# usa Postgres: roda em SQLite.
+
+[Service]
+Type=simple
+User=deploy
+Group=deploy
+WorkingDirectory=/var/www/projetos/LA-Chat
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=3
+
+Environment=NODE_ENV=production
+Environment=HOST=127.0.0.1
+
+# ==========================================================================
+#  O AMBIENTE DA INSTÂNCIA — é ele que a torna diferente das outras
+#
+#      /etc/lachat-bemestar.env      PORT=6185, CHAT_ORIGENS, as três chaves,
+#                                    CHAT_SQLITE e CHAT_ARQUIVOS próprios
+#
+#      install -o root -g deploy -m 640 /dev/null /etc/lachat-<instancia>.env
+#
+#  O modo 640 com grupo do serviço é o ponto: o processo lê, e nenhum outro
+#  usuário da máquina lê. `Environment=` aqui dentro NÃO serviria — o conteúdo
+#  de uma unit é legível por qualquer um com `systemctl cat`.
+#
+#  SEM o `-`: o arquivo é OBRIGATÓRIO. Um chat sem os segredos não tem o que
+#  fazer, e subir pela metade seria pior que não subir.
+# ==========================================================================
+EnvironmentFile=/etc/lachat-%i.env
+
+# --- contenção do processo -------------------------------------------------
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+# NÃO ponha MemoryDenyWriteExecute aqui.
+#
+# Ele proíbe o processo de tornar executável uma página de memória que ele
+# mesmo escreveu — e é exatamente isso que o V8 faz para compilar JavaScript.
+# O Node não avisa: derruba o processo com V8_Fatal e o systemd registra
+# `status=5/TRAP`, `core-dump`. Pior, a queda não é na partida — vem quando o
+# compilador sobe a primeira função de nível, alguns segundos depois, o que faz
+# parecer erro de rede ou de banco. Já custou a primeira subida de outro
+# projeto deste parque.
+
+# ==========================================================================
+#  O CÓDIGO É SÓ DE LEITURA; os dados da instância vivem FORA dele.
+#
+#  `/var/lib/lachat/%i` — banco, anexos e contadores desta instância, e de mais
+#  ninguém. Fora da árvore do código, a atualização (`git pull`) não tem como
+#  encostar neles; e uma falha na aplicação não consegue reescrever o próprio
+#  servidor.
+# ==========================================================================
+ReadWritePaths=/var/lib/lachat/%i
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=lachat-%i
+
+[Install]
+WantedBy=multi-user.target

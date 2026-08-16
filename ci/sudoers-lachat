@@ -24,9 +24,23 @@
 #  `systemctl restart *` deixaria derrubar o postgresql, o nginx e o sshd.
 # ==========================================================================
 
-deploy ALL=(root) NOPASSWD: /usr/bin/systemctl start lachat.service
-deploy ALL=(root) NOPASSWD: /usr/bin/systemctl stop lachat.service
-deploy ALL=(root) NOPASSWD: /usr/bin/systemctl restart lachat.service
+# ==========================================================================
+#  O CURINGA `lachat@*.service` É PROPOSITAL, e é seguro pelo motivo certo:
+#  o glob do sudoers NÃO casa com `/`. Não há como escapar de `lachat@…` para
+#  outra unit — `lachat@../../sshd.service` simplesmente não casa.
+#
+#  Sem ele, cada cliente novo exigiria editar o sudoers no servidor, e a
+#  entrega automática quebraria na primeira instância esquecida.
+# ==========================================================================
+deploy ALL=(root) NOPASSWD: /usr/bin/systemctl start lachat@*.service
+deploy ALL=(root) NOPASSWD: /usr/bin/systemctl stop lachat@*.service
+deploy ALL=(root) NOPASSWD: /usr/bin/systemctl restart lachat@*.service
 
-# Leitura: a entrega usa para conferir se o serviço subiu de verdade.
-deploy ALL=(root) NOPASSWD: /usr/bin/systemctl is-active lachat.service
+# Leitura: a entrega usa para conferir se cada instância subiu de verdade.
+deploy ALL=(root) NOPASSWD: /usr/bin/systemctl is-active lachat@*.service
+
+# A unit é MOLDE e vale para todas as instâncias; a entrega a atualiza quando
+# ela muda (uma contenção nova do systemd, por exemplo). Caminho de ORIGEM
+# fixo: só o arquivo que veio do repositório entra como unit.
+deploy ALL=(root) NOPASSWD: /usr/bin/cp /var/www/projetos/LA-Chat/nginx/lachat@.service /etc/systemd/system/lachat@.service
+deploy ALL=(root) NOPASSWD: /usr/bin/systemctl daemon-reload

@@ -5,6 +5,57 @@ recurso, 3ª para correção. Nenhuma casa para no 9.
 
 ---
 
+## 0.5.0 — 16/08/2026 · uma instância por projeto
+
+Decisão do dono, e ela está certa.
+
+O chat sabe separar clientes por `contexto`, e há teste de segurança para isso
+— inclusive no fan-out do tempo real, que é onde o isolamento costuma vazar.
+Mas esse isolamento é **lógico**: um campo conferido em cada consulta. O que
+trafega aqui é conversa de equipe de clínica, que fala de paciente. Para esse
+conteúdo, "estão no mesmo arquivo, separadas por software" é uma frase que
+ninguém quer ter de dizer ao cliente.
+
+Agora cada projeto tem **processo, banco e chaves próprios**. O vazamento entre
+clientes deixa de depender de o código estar certo.
+
+### O que NÃO se multiplica é o código
+
+Uma cópia do chat por cliente nos devolveria o problema que o módulo existe
+para evitar: N lugares para corrigir o mesmo defeito. Então o código continua um
+só, em `/var/www/projetos/LA-Chat`, e as instâncias são **unidades de molde do
+systemd** (`lachat@bemestar`, `lachat@bordatudo`) apontando para ele com
+ambientes diferentes. Um `git pull` e N restarts atualizam todo mundo.
+
+Cada instância tem `/etc/lachat-<nome>.env` (porta, origens e as três chaves) e
+`/var/lib/lachat/<nome>/` (banco e anexos) — **fora da árvore do código**, para
+que a atualização não tenha como encostar neles.
+
+### A porta é a do site + 1000
+
+    BemEstarClinic  5185  →  chat 6185
+    Borda Tudo      5193  →  chat 6193
+
+Olhando o número, se sabe de quem é a instância. Numeração sequencial
+(5197, 5198, 5199…) obriga a consultar uma tabela que sempre desatualiza.
+
+### As instâncias são DESCOBERTAS, nunca listadas
+
+Tanto o `deploy.sh --atualizar-todas` quanto a entrega automática varrem
+`/etc/lachat-*.env`. Uma lista dentro do script desatualizaria — e a instância
+esquecida seria justamente a que ficaria sem a correção, em silêncio, até um
+cliente reclamar.
+
+Na entrega, uma instância que falha **não impede as outras**: o cliente B não
+fica sem correção porque o A tem problema. Mas a entrega termina vermelha.
+
+- `nginx/lachat.service` (instância única) saiu; entrou `nginx/lachat@.service`.
+  Nunca chegou a produção, então não há migração a fazer.
+- O sudoers usa `lachat@*.service`. É seguro pelo motivo certo: o glob do
+  sudoers não casa com `/`, então não há como escapar para outra unit.
+
+---
+
 ## 0.4.1 — 16/08/2026 · entrega automática, e o conector que se atualiza sozinho
 
 O chat passou a ter repositório e pipeline, no mesmo molde dos sites do parque:

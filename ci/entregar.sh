@@ -27,7 +27,6 @@
 set -uo pipefail
 
 PROJETO="${PROJETO:-/var/www/projetos/LA-Chat}"
-SERVICO="lachat"
 TRAVA="/tmp/entregar-lachat.lock"
 
 cd "$PROJETO" || { echo "entregar: $PROJETO não existe"; exit 1; }
@@ -65,32 +64,68 @@ DEPOIS="$(git rev-parse --short HEAD)"
 echo "código: $ANTES → $DEPOIS"
 
 # ==========================================================================
-#  2. DEPENDÊNCIAS E BANCO
+#  2. DEPENDÊNCIAS — uma vez, porque o código é um só
 # ==========================================================================
 npm ci --omit=dev --no-audit --no-fund || { echo "entregar: npm ci falhou"; exit 1; }
 
-# As migrations do chat são idempotentes e rodam com o serviço de pé; o
-# arquivo de ambiente traz a chave que decifra o que já existe.
-set -a; . /etc/lachat.env; set +a
-node src/infra/dados/migrar.js || { echo "entregar: migração falhou"; exit 1; }
-
-# ==========================================================================
-#  3. SUBIR
-# ==========================================================================
-sudo /usr/bin/systemctl restart "$SERVICO.service"
-sleep 2
-
-if ! sudo /usr/bin/systemctl is-active --quiet "$SERVICO.service"; then
-  echo "entregar: o serviço NÃO subiu — journalctl -u $SERVICO -n 50"
-  exit 1
+# A unit é MOLDE (`lachat@.service`): atualizá-la aqui é o que faz uma mudança
+# de contenção do systemd alcançar todas as instâncias.
+if ! cmp -s nginx/lachat@.service /etc/systemd/system/lachat@.service; then
+  echo "unit do systemd mudou — atualizando"
+  sudo /usr/bin/cp nginx/lachat@.service /etc/systemd/system/lachat@.service
+  sudo /usr/bin/systemctl daemon-reload
 fi
 
-# Prova de vida pela porta, e não só pelo systemd: "active" só diz que o
-# processo existe, não que ele responde.
-PORTA="$(grep -oP '^PORT=\K\d+' /etc/lachat.env || echo 5197)"
-CODIGO="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORTA/chat/saude" || echo 000)"
-echo "saúde: HTTP $CODIGO"
-[ "$CODIGO" = "200" ] || { echo "entregar: o chat não respondeu na porta $PORTA"; exit 1; }
+# ==========================================================================
+#  3. CADA INSTÂNCIA — migração e restart, uma a uma
+#
+#  As instâncias são descobertas pelos ARQUIVOS DE AMBIENTE, e não por uma
+#  lista aqui dentro: lista em script desatualiza, e a instância esquecida
+#  seria justamente a que fica sem a correção — em silêncio, até um cliente
+#  reclamar.
+#
+#  Uma que falhe NÃO impede as outras de atualizar: o cliente B não fica sem
+#  correção porque o A tem um problema. Mas a entrega termina vermelha.
+# ==========================================================================
+falhas=0
+achou=0
+
+for amb in /etc/lachat-*.env; do
+  [ -e "$amb" ] || continue
+  inst="$(basename "$amb" .env)"; inst="${inst#lachat-}"
+  achou=1
+  echo "── instância $inst"
+
+  # Subshell: cada instância tem SUAS chaves e SEU banco, e uma não pode
+  # herdar o ambiente da anterior.
+  if ! ( set -a; . "$amb"; set +a; node src/infra/dados/migrar.js ); then
+    echo "   ✖ migração falhou"; falhas=$((falhas+1)); continue
+  fi
+
+  sudo /usr/bin/systemctl restart "lachat@$inst.service"
+  sleep 2
+
+  if ! sudo /usr/bin/systemctl is-active --quiet "lachat@$inst.service"; then
+    echo "   ✖ não subiu — journalctl -u lachat@$inst -n 50"
+    falhas=$((falhas+1)); continue
+  fi
+
+  # Prova de vida PELA PORTA, e não só pelo systemd: "active" diz que o
+  # processo existe, não que ele responde.
+  porta="$(grep -oP '^PORT=\K\d+' "$amb" || echo 0)"
+  codigo="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$porta/chat/saude" || echo 000)"
+  if [ "$codigo" = "200" ]; then
+    echo "   ✔ ativa na porta $porta"
+  else
+    echo "   ✖ não respondeu na porta $porta (HTTP $codigo)"
+    falhas=$((falhas+1))
+  fi
+done
+
+if [ "$achou" = "0" ]; then
+  echo "entregar: nenhuma instância instalada (/etc/lachat-*.env vazio)"
+  exit 1
+fi
 
 # ==========================================================================
 #  4. O CONECTOR NOS SITES — CONFERIR, e NÃO instalar
@@ -118,3 +153,4 @@ if [ -f instalar-em.js ]; then
 fi
 
 echo "=== entrega concluída em $(date '+%d/%m/%Y %H:%M:%S') ==="
+exit "$falhas"
