@@ -1,0 +1,20 @@
+# ==========================================================================
+#  OS SITES QUE TÊM O CHAT INSTALADO
+#
+#  Uma linha por repositório: <dono>/<repo>
+#
+#  Esta lista é EXPLÍCITA de propósito. A alternativa — "todos os repositórios
+#  da conta" — faria o workflow commitar um arquivo dentro de projetos que não
+#  usam o chat, e um dia dentro de um projeto de cliente que nem sabe o que é
+#  isso. Acrescentar uma linha aqui é o ato de dizer "este site é hospedeiro".
+#
+#  A ORDEM NÃO IMPORTA: cada site tem o próprio portão de testes e a própria
+#  entrega. Um que falhe não segura os outros.
+#
+#  Ao instalar o chat num site novo:
+#    1. `node instalar-em.js ../<Projeto>`   (copia o conector)
+#    2. as duas linhas do server.js + o script no HTML   (uma vez, à mão)
+#    3. acrescente o repositório aqui
+# ==========================================================================
+
+luizwagm/site_bemestarclinic

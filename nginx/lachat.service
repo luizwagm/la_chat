@@ -1,0 +1,109 @@
+[Unit]
+# ==========================================================================
+#  MOLDE do serviço. Os campos __DESTINO__, __USUARIO__, __GRUPO__ e
+#  __PORTA__ são trocados na instalação.
+#
+#  Para instalar à mão:
+#      sed -e 's#__DESTINO__#/var/www/projetos/LA-Chat#g' \
+#          -e 's#__USUARIO__#deploy#g' -e 's#__GRUPO__#deploy#g' \
+#          -e 's#__PORTA__#5197#g' nginx/lachat.service \
+#        > /etc/systemd/system/lachat.service
+# ==========================================================================
+Description=LA Chat — comunicação corporativa em tempo real
+Documentation=https://luizaugust.me
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+# `After`, e NÃO `Requires`, para o Postgres.
+#
+# A unit `postgresql.service` do Debian/Ubuntu é uma FACHADA: ela termina com
+# sucesso quase imediatamente, e quem realmente segura o banco é a
+# `postgresql@<versão>-main`. Um `Requires` daria falsa garantia e, pior,
+# derrubaria o chat numa manutenção do banco.
+#
+# E o chat padrão nem usa Postgres — ele roda em SQLite. Esta linha só importa
+# nas instalações que escolheram `CHAT_BANCO=pg`; nas outras é inofensiva.
+
+[Service]
+Type=simple
+User=__USUARIO__
+Group=__GRUPO__
+WorkingDirectory=__DESTINO__
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=3
+
+# Escuta SÓ no loopback: quem fala com a internet é o nginx. Sem isto a porta
+# ficaria exposta direto, contornando TLS, limites e cabeçalhos do proxy — e,
+# no caso do chat, contornando também a conferência de `Origin`, porque o
+# atacante deixaria de precisar passar pelo nginx.
+Environment=HOST=127.0.0.1
+Environment=PORT=__PORTA__
+Environment=NODE_ENV=production
+
+# ==========================================================================
+#  OS SEGREDOS FICAM FORA DO PROJETO E FORA DO GIT.
+#
+#      CHAT_SEGREDO_PASSE=<32 bytes em base64>   # o MESMO do conector
+#      CHAT_SEGREDO_BUSCA=<32 bytes em base64>
+#      CHAT_DADOS_CHAVE=<32 bytes em base64>
+#      CHAT_ORIGENS=https://site-do-cliente.com
+#      CHAT_PROXIES=1     # ATENÇÃO: 2 no arranjo com conector — leia abaixo
+#
+#  CHAT_PROXIES é a QUANTIDADE DE SALTOS até o chat, e errar o número não dá
+#  erro nenhum — dá uma clínica inteira trancada de uma vez:
+#
+#      nginx → chat                  →  1   (chat em subdomínio próprio)
+#      nginx → site → conector → chat →  2   (o caso do BemEstarClinic)
+#
+#  Com 1 num arranjo de 2 saltos, o chat lê o IP errado do `X-Forwarded-For`:
+#  todo visitante vira 127.0.0.1, o limitador conta todo mundo no mesmo balde
+#  e a auditoria fica inútil. O servidor detecta e avisa no log — confira o
+#  journal na primeira subida.
+#
+#      install -o root -g __GRUPO__ -m 640 /dev/null /etc/lachat.env
+#
+#  O modo 640 com grupo do serviço é o ponto: o processo lê, e nenhum outro
+#  usuário da máquina lê. `Environment=` aqui dentro NÃO serviria — o conteúdo
+#  de uma unit é legível por qualquer um com `systemctl cat`.
+#
+#  SEM o `-`: ao contrário dos sites do parque, aqui o arquivo é OBRIGATÓRIO.
+#  Um site sem a chave ainda serve páginas; um chat sem os segredos não tem o
+#  que fazer, e subir pela metade seria pior que não subir.
+# ==========================================================================
+EnvironmentFile=/etc/lachat.env
+
+# --- contenção do processo -------------------------------------------------
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+# NÃO ponha MemoryDenyWriteExecute aqui.
+#
+# Ele proíbe o processo de tornar executável uma página de memória que ele
+# mesmo escreveu — e é exatamente isso que o V8 faz para compilar JavaScript.
+# O Node não avisa: derruba o processo com V8_Fatal e o systemd registra
+# `status=5/TRAP`, `core-dump`. Pior, a queda não é na partida — vem quando o
+# compilador sobe a primeira função de nível, alguns segundos depois, o que faz
+# parecer erro de rede ou de banco. Já custou a primeira subida de outro
+# projeto deste parque.
+
+# A única pasta gravável é a de dados: banco SQLite, anexos e contadores.
+# O código não precisa ser gravável — e não sendo, uma falha na aplicação não
+# consegue reescrever o próprio servidor.
+ReadWritePaths=__DESTINO__/dados
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=lachat
+
+[Install]
+WantedBy=multi-user.target

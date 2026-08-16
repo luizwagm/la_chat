@@ -1,0 +1,32 @@
+{
+  "name": "la-chat",
+  "version": "0.4.0",
+  "private": true,
+  "description": "LA Chat — módulo de comunicação corporativa em tempo real, instalável nos sites do gerador (WebSocket, SQLite ou PostgreSQL, sem passo de build).",
+  "main": "server.js",
+  "author": "LA Software House (https://luizaugust.me)",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "migrar": "node src/infra/dados/migrar.js",
+    "migrar:status": "node src/infra/dados/migrar.js --status",
+    "exemplo": "node exemplo/server.js",
+    "chave": "node -e \"console.log(require('node:crypto').randomBytes(32).toString('base64'))\"",
+    "test": "node testes/rodar.cjs",
+    "test:unidade": "node testes/unidade.cjs",
+    "test:integracao": "node testes/integracao.cjs",
+    "test:realtime": "node testes/realtime.cjs",
+    "test:seguranca": "node testes/seguranca.cjs",
+    "test:e2e": "node testes/e2e.cjs"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "^11.5.0",
+    "pg": "^8.22.0"
+  }
+}

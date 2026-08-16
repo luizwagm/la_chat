@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Empresa Demo — hospedeiro do LA Chat</title>
+<style>
+  /* ==========================================================================
+     ESTE CSS É AGRESSIVO DE PROPÓSITO.
+
+     Ele define `.btn`, `input`, `button` e `*` com valores fortes justamente
+     para PROVAR que o chat não é afetado: se o Shadow DOM falhasse, o botão de
+     enviar ficaria rosa e com serifa, e a diferença seria visível na hora.
+
+     É um teste visual permanente do isolamento prometido no §36.
+     ========================================================================== */
+  * { box-sizing: border-box; }
+  button, input, textarea { font-family: "Times New Roman", serif !important; }
+  .btn { background: hotpink !important; border: 3px dashed purple !important; }
+
+  body {
+    margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: #f4f6fa; color: #1a1d23; line-height: 1.6;
+  }
+  header { background: #1e2a45; color: #fff; padding: 18px 24px; }
+  header h1 { margin: 0; font-size: 19px; letter-spacing: -.01em; }
+  header p { margin: 2px 0 0; opacity: .75; font-size: 13px; }
+  main { max-width: 780px; margin: 28px auto; padding: 0 20px; }
+  .cartao { background: #fff; border: 1px solid #e2e6ee; border-radius: 12px; padding: 22px; margin-bottom: 18px; }
+  .cartao h2 { margin: 0 0 8px; font-size: 16px; }
+  .pessoas { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+  .pessoas a {
+    display: block; padding: 10px 16px; border-radius: 9px; text-decoration: none;
+    background: #2c5cff; color: #fff; font-weight: 600; font-size: 14px;
+  }
+  code { background: #eef1f6; padding: 2px 6px; border-radius: 5px; font-size: 13px; }
+  pre { background: #1a1d23; color: #e8eaee; padding: 14px; border-radius: 9px; overflow-x: auto; font-size: 13px; }
+  ul { padding-left: 20px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Empresa Demo</h1>
+  <p>Um site qualquer, que instalou o LA Chat com duas linhas.</p>
+</header>
+
+<main>
+  <div class="cartao">
+    <h2>Quem está usando</h2>
+    <p><!--#QUEM--></p>
+    <div class="pessoas">
+      <a href="/entrar?quem=ana">Entrar como Ana</a>
+      <a href="/entrar?quem=bruno">Entrar como Bruno</a>
+      <a href="/entrar?quem=carla">Entrar como Carla</a>
+    </div>
+  </div>
+
+  <div class="cartao">
+    <h2>Como testar em tempo real</h2>
+    <ul>
+      <li>Abra esta página em <b>duas janelas anônimas</b> (ou dois navegadores).</li>
+      <li>Entre como <b>Ana</b> numa e como <b>Bruno</b> na outra.</li>
+      <li>Clique no botão 💬 no canto, vá em <b>Pessoas</b> e escolha a outra pessoa.</li>
+      <li>Escreva. A mensagem aparece do outro lado sem recarregar nada.</li>
+    </ul>
+  </div>
+
+  <div class="cartao">
+    <h2>O que este site precisou fazer</h2>
+    <pre>const chat = require("./lachat")({
+  url: "http://127.0.0.1:5197",
+  segredo: process.env.CHAT_SEGREDO_PASSE,
+  contexto: "empresa-demo",
+  usuario: (req) =&gt; sessaoDe(req),   // ← o contrato: quem está logado?
+});
+
+const servidor = http.createServer((req, res) =&gt; {
+  if (chat.rota(req, res)) return;   // ← linha 1
+  // ... o resto do site
+});
+
+chat.conectarUpgrade(servidor);      // ← linha 2 (WebSocket)</pre>
+    <p>Mais nada. O chat não conhece o banco deste site, não conhece o model de
+       usuário dele e não grava nada aqui.</p>
+  </div>
+
+  <div class="cartao">
+    <h2>Teste de isolamento visual</h2>
+    <p>Esta página define <code>button { font-family: "Times New Roman" }</code> e
+       <code>.btn { background: hotpink }</code> com <code>!important</code>.
+       O botão abaixo obedece. O chat, ao lado, não — porque vive dentro de um
+       Shadow DOM.</p>
+    <button class="btn">Botão do site (rosa e com serifa)</button>
+  </div>
+</main>
+
+<!--#CHAT-->
+</body>
+</html>

@@ -1,0 +1,16 @@
+# Segredos — nunca versionados. O modelo sem segredo é o `.env.exemplo`.
+.env
+.env.*
+!.env.exemplo
+
+node_modules/
+
+# Dados de execução: banco, anexos enviados, contadores do limitador.
+# Anexo de conversa dentro do repositório seria vazamento de dado pessoal
+# pelo git — e git não esquece.
+dados/
+!dados/.gitkeep
+
+# Saída das suítes
+testes/saida/
+*.log

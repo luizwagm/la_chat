@@ -1,0 +1,32 @@
+# ==========================================================================
+#  Regra de sudo da entrega automática — LA Chat
+#
+#  Instalar (uma vez, como root):
+#      sudo cp ci/sudoers-lachat /etc/sudoers.d/lachat
+#      sudo chmod 440 /etc/sudoers.d/lachat
+#      sudo visudo -c            # confere a sintaxe ANTES de confiar
+#
+#  POR QUE ELA É TÃO ESTREITA
+#
+#  O `entregar.sh` vem do repositório do GitHub. Autorizar `deploy` a rodar
+#  qualquer coisa com sudo seria autorizar QUALQUER COISA como root — bastaria
+#  um commit trocando o conteúdo do arquivo.
+#
+#  E o que está do outro lado neste servidor é pesado: o Postgres com
+#  prontuário e anamnese de pacientes, mais o banco do chat com as conversas
+#  da equipe. Um vazamento de repositório não pode virar acesso a isso.
+#
+#  Aqui só três verbos, num serviço só, por caminho absoluto. O pior que um
+#  commit malicioso alcança é reiniciar o próprio chat — o mesmo poder que a
+#  aplicação já tem.
+#
+#  Sem curinga no fim: `systemctl restart lachat.service` e nada além.
+#  `systemctl restart *` deixaria derrubar o postgresql, o nginx e o sshd.
+# ==========================================================================
+
+deploy ALL=(root) NOPASSWD: /usr/bin/systemctl start lachat.service
+deploy ALL=(root) NOPASSWD: /usr/bin/systemctl stop lachat.service
+deploy ALL=(root) NOPASSWD: /usr/bin/systemctl restart lachat.service
+
+# Leitura: a entrega usa para conferir se o serviço subiu de verdade.
+deploy ALL=(root) NOPASSWD: /usr/bin/systemctl is-active lachat.service
