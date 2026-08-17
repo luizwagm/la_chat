@@ -29,8 +29,40 @@ fi
 AMBIENTE_ARQ="${AMBIENTE_ARQ:-/etc/lachat-$INSTANCIA.env}"
 SERVICO="lachat@$INSTANCIA"
 PORTA_INST="$(grep -oP '^PORT=\K\d+' "$AMBIENTE_ARQ" 2>/dev/null || echo 5197)"
-BASE="${2:-http://127.0.0.1:$PORTA_INST}"
-PREFIXO="${CHAT_PREFIXO:-/chat}"
+
+# ==========================================================================
+#  DOIS ALVOS, e eles não se substituem
+#
+#  LOCAL  — 127.0.0.1 na porta da instância. Responde "o serviço está de pé?".
+#  FORA   — a URL pública. Responde "o nginx e o conector estão no caminho?".
+#
+#  Na primeira versão, passar a URL pública TROCAVA o alvo local: quando o
+#  externo falhava, o relatório dizia que o serviço não respondia — e o serviço
+#  estava perfeitamente de pé. Diagnóstico invertido é pior que diagnóstico
+#  nenhum, porque manda mexer no lugar errado.
+# ==========================================================================
+LOCAL="http://127.0.0.1:$PORTA_INST"
+PREFIXO="${CHAT_PREFIXO:-/chat}"          # dentro do serviço, sempre /chat
+
+# ==========================================================================
+#  O CAMINHO PÚBLICO NÃO É `/chat`
+#
+#  Com o conector, o chat mora DENTRO do site — no BemEstarClinic, em
+#  `/restrito/chat`, porque o cookie da gestão tem `Path=/restrito`. Conferir
+#  `https://site/chat/saude` devolve 404 e acusa um problema que não existe.
+#
+#  Aceita os dois jeitos:
+#      ./verificar.sh bemestar https://bemestarclinic.com
+#      ./verificar.sh bemestar https://bemestarclinic.com/restrito/chat
+# ==========================================================================
+FORA="${2:-}"
+if [ -n "$FORA" ]; then
+  FORA="${FORA%/}"
+  case "$FORA" in
+    */chat) : ;;                                   # já veio com o caminho
+    *) FORA="$FORA${CHAT_PREFIXO_PUBLICO:-/restrito/chat}" ;;
+  esac
+fi
 
 ok=0; aviso=0; erro=0
 verde()   { printf "  \033[32m✓\033[0m %s\n" "$1"; ok=$((ok+1)); }
@@ -41,14 +73,15 @@ secao()   { printf "\n  \033[1m%s\033[0m\n" "$1"; }
 echo ""
 echo "  LA Chat — verificação"
 echo "  ─────────────────────────────────────────────"
-echo "  Instância: $INSTANCIA   Alvo: $BASE$PREFIXO"
+echo "  Instância: $INSTANCIA   Local: $LOCAL$PREFIXO"
+[ -n "$FORA" ] && echo "  Fora:      $FORA"
 
 # ==========================================================================
-secao "1. O serviço responde"
+secao "1. O serviço responde (aqui dentro)"
 # ==========================================================================
-SAUDE="$(curl -fsS --max-time 8 "$BASE$PREFIXO/saude" 2>/dev/null || true)"
+SAUDE="$(curl -fsS --max-time 8 "$LOCAL$PREFIXO/saude" 2>/dev/null || true)"
 if [ -z "$SAUDE" ]; then
-  vermelho "o chat não respondeu em $BASE$PREFIXO/saude"
+  vermelho "o chat não respondeu em $LOCAL$PREFIXO/saude"
   echo "        systemctl status $SERVICO --no-pager | tail -20"
   echo "        journalctl -u $SERVICO -n 50 --no-pager"
 else
@@ -145,9 +178,9 @@ if command -v nginx >/dev/null 2>&1; then
   CONF="$(nginx -T 2>/dev/null || true)"
 
   if echo "$CONF" | grep -q 'conexao_upgrade\|connection_upgrade'; then
-    verde "o `map` de Upgrade está carregado"
+    verde "o map de Upgrade está carregado"
   else
-    vermelho "o `map` de Upgrade NÃO está carregado"
+    vermelho "o map de Upgrade NÃO está carregado"
     echo "        cp nginx/lachat-upgrade.conf /etc/nginx/conf.d/ && nginx -s reload"
     echo "        SEM isto o chat carrega e autentica, mas NUNCA recebe mensagem"
     echo "        em tempo real — e nada aparece quebrado."
@@ -187,27 +220,39 @@ done
 # ==========================================================================
 secao "6. Pelo lado de fora"
 # ==========================================================================
-if [ "${BASE#https://}" != "$BASE" ]; then
-  CODIGO="$(curl -fsS -o /dev/null -w '%{http_code}' --max-time 10 "$BASE$PREFIXO/saude" 2>/dev/null || echo '000')"
-  [ "$CODIGO" = "200" ] && verde "o chat responde por HTTPS ($CODIGO)" \
-                        || vermelho "o chat NÃO responde por HTTPS (código $CODIGO)"
+if [ -z "$FORA" ]; then
+  amarelo "sem URL pública — a verificação externa foi pulada"
+  echo "        ./verificar.sh $INSTANCIA https://site-do-cliente.com"
+elif [ "${FORA#https://}" = "$FORA" ]; then
+  amarelo "o alvo externo não é HTTPS — pulado"
+  echo "        Em produção o chat EXIGE HTTPS: sem ele o cookie não leva"
+  echo "        a marca Secure e o navegador recusa WebSocket seguro."
+else
+  CODIGO="$(curl -fsS -o /dev/null -w '%{http_code}' --max-time 10 "$FORA/saude" 2>/dev/null || echo '000')"
+  case "$CODIGO" in
+    200) verde "o chat responde em $FORA/saude" ;;
+    404) vermelho "404 em $FORA/saude — o site não está repassando este caminho"
+         echo "        O conector está instalado e com o prefixo certo no server.js?"
+         echo "        Se o chat está montado em outro caminho, informe-o:"
+         echo "        ./verificar.sh $INSTANCIA https://site.com/o/caminho/chat" ;;
+    502|503) vermelho "$CODIGO — o site respondeu, mas não alcançou o chat"
+         echo "        CHAT_URL no /etc/<site>.env aponta para a porta $PORTA_INST?" ;;
+    *)   vermelho "o chat NÃO responde por HTTPS (código $CODIGO)" ;;
+  esac
 
   # O aperto de mão do WebSocket, sem bilhete, TEM de ser recusado com 401 —
   # e não com 404, que indicaria que o nginx não está repassando o /ws.
   WS="$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 \
         -H "Connection: Upgrade" -H "Upgrade: websocket" \
         -H "Sec-WebSocket-Version: 13" -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
-        "$BASE$PREFIXO/ws" 2>/dev/null || echo '000')"
+        "$FORA/ws" 2>/dev/null || echo '000')"
   case "$WS" in
     401) verde "o /ws recusa conexão sem bilhete (401) — é o esperado" ;;
-    404) vermelho "o /ws devolveu 404 — o nginx não está repassando o WebSocket" ;;
+    404) vermelho "o /ws devolveu 404 — o nginx não está repassando o WebSocket"
+         echo "        falta o bloco 'location $(printf '%s' "${FORA#https://*/}" | sed 's|^|/|')/ws' no conf do SITE" ;;
     000) vermelho "o /ws não respondeu" ;;
     *)   amarelo "o /ws respondeu $WS (esperado 401)" ;;
   esac
-else
-  amarelo "alvo não é HTTPS — a verificação externa foi pulada"
-  echo "        Em produção o chat EXIGE HTTPS: sem ele o cookie não leva"
-  echo "        a marca Secure e o navegador recusa WebSocket seguro."
 fi
 
 # ==========================================================================

@@ -5,6 +5,94 @@ recurso, 3ª para correção. Nenhuma casa para no 9.
 
 ---
 
+## 0.6.0 — 17/08/2026 · o aviso sonoro passou a ser um arquivo
+
+Pedido do cliente do BemEstarClinic: o toque tinha de ser **o dele**, e **alto**.
+A recepção da clínica é barulhenta e o bipe de dois tons passava despercebido.
+
+### O arquivo entra, e o bipe gerado FICA como reserva
+
+Até aqui o som era sintetizado no WebAudio, e o comentário no código defendia a
+escolha: um `.mp3` seria mais um recurso para carregar e mais um caminho para o
+CSP do hospedeiro bloquear. O argumento continua válido — por isso o oscilador
+não foi removido, virou o caminho de volta.
+
+Ele cobre três casos em que o arquivo não chega: CSP com `media-src` fechado (o
+`/restrito` do BemEstar tem CSP), rede caída entre a página carregar e a
+mensagem chegar, e serviço atualizado sem o `aviso.mp3` na pasta. Em nenhum
+deles o aviso pode emudecer sem ninguém saber — um som ruim avisa, silêncio não.
+
+### O toque é servido pelo próprio chat
+
+`GET <prefixo>/aviso.mp3`, ao lado do cliente, e pelo mesmo motivo: trocar o som
+chega a todas as instalações sem ninguém recopiar arquivo. Aqui o cache é
+**longo** (`max-age` de 7 dias), ao contrário do `la-chat.js`, que usa
+`no-cache` + ETag: o cliente precisa de correção imediata, o som não muda.
+
+O arquivo é buscado **uma vez**, na liberação do áudio — que já acontece na
+primeira interação com a página —, e fica decodificado na memória. A mensagem
+que chega não espera download nenhum para soar.
+
+### Volume
+
+`gain` de 2.2 no arquivo, e não 1.0. O toque do cliente tem pico em 0,43 da
+escala; com ganho unitário ele sairia em menos da metade do que o alto-falante
+consegue. 2,2 aproxima o pico do teto (0,43 × 2,2 = 0,94) sem ceifar a onda —
+acima disso o som chia, e mais volume que o material permite não existe. O bipe
+de reserva subiu junto, de 0,06 para 0,35.
+
+### O que o cliente mandou tinha 11 segundos
+
+Eram **quatro repetições** do mesmo toque (a envolvente medida no navegador
+mostra o padrão reiniciando a cada 2,30s). Um aviso de 11 segundos tocando a
+cada mensagem faz a pessoa desligar o som no segundo dia — o oposto do pedido.
+Ficou **um ciclo**, cortado em fronteira de frame MP3: sem recodificar, sem
+perder um decibel, 73 KB.
+
+---
+
+## 0.5.1 — 16/08/2026 · três defeitos do próprio diagnóstico
+
+A primeira verificação real no servidor devolveu cinco erros. **Três eram do
+`verificar.sh`, não da instalação** — e um relatório que acusa o lugar errado é
+pior que relatório nenhum, porque manda mexer no que estava certo.
+
+### A URL pública substituía a checagem local
+
+`./verificar.sh bemestar https://site.com` trocava o alvo: quando o externo
+falhava, a seção 1 dizia "o chat não respondeu" — e o serviço estava de pé.
+Agora são dois alvos que não se substituem: **local** responde "o serviço está
+de pé?", **fora** responde "o nginx e o conector estão no caminho?".
+
+### O caminho público não é `/chat`
+
+Com o conector, o chat mora dentro do site — no BemEstarClinic, em
+`/restrito/chat`. Conferir `https://site/chat/saude` devolve 404 e acusa um
+problema que não existe. Agora o caminho do site é assumido por padrão, e pode
+ser dito por inteiro na chamada. O 404 e o 502 ganharam mensagens que dizem o
+que conferir em cada caso.
+
+### Crase dentro de aspas duplas
+
+`verde "o \`map\` de Upgrade está carregado"` — em shell, crase dentro de aspas
+duplas é **execução de comando**. O relatório saiu com
+`map: command not found` e a palavra sumiu da frase. As duas ocorrências eram as
+únicas do arquivo; nas mensagens, marcação de texto e shell não se misturam.
+
+### E um falso positivo no próprio serviço
+
+O aviso de `CHAT_PROXIES` disparava no primeiro boot de todo servidor **bem
+configurado**: a sincronização de elenco chega do próprio site, servidor a
+servidor, em 127.0.0.1 e sem `X-Forwarded-For`. Ela é loopback porque É loopback
+— não porque a configuração esteja errada.
+
+Um alarme que dispara sozinho é um alarme que se aprende a ignorar, e aí o dia
+em que ele estiver certo não vai adiantar. A pergunta correta é: **veio uma
+cadeia de proxies e, mesmo assim, o IP saiu loopback?** Só isso é ter pulado
+saltos demais.
+
+---
+
 ## 0.5.0 — 16/08/2026 · uma instância por projeto
 
 Decisão do dono, e ela está certa.

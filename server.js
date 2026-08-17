@@ -126,13 +126,31 @@ async function principal() {
      defeito que ninguém descobre até precisar do log.
 
      Este aviso dispara UMA vez por processo, quando o IP resolvido de um
-     visitante é loopback em produção. Não é palpite: um cliente de verdade
+     VISITANTE é loopback em produção. Não é palpite: um cliente de verdade
      nunca chega de 127.0.0.1 através do nginx.
+
+     ---------------------------------------------------------------------
+     E NEM TODA REQUISIÇÃO É DE UM VISITANTE.
+
+     A sincronização de elenco chega do PRÓPRIO SITE, servidor a servidor, em
+     127.0.0.1 e sem `X-Forwarded-For` nenhum. Ela é loopback porque É loopback
+     — não porque a configuração esteja errada.
+
+     Sem esta distinção, todo servidor bem configurado acusava
+     "CHAT_PROXIES parece ERRADO" no primeiro boot do site, e o `verificar.sh`
+     repetia o erro para quem fosse conferir a instalação. Um alarme que dispara
+     sozinho é um alarme que se aprende a ignorar — e aí o dia em que ele estiver
+     certo não vai adiantar.
+
+     A pergunta correta é: veio uma CADEIA de proxies e, mesmo assim, o IP saiu
+     loopback? Isso sim é ter pulado saltos demais.
      ========================================================================== */
   let avisouProxies = false;
   function conferirProxies(req) {
     if (avisouProxies || !CONF.producao) return;
     if (!ehLoopback(req.ipReal)) return;
+    /* Sem `X-Forwarded-For` não houve proxy: é chamada interna, não visitante. */
+    if (!req.headers["x-forwarded-for"]) return;
     avisouProxies = true;
     console.error(`
   ✖ CHAT_PROXIES parece ERRADO (valor atual: ${CONF.proxiesConfiaveis}).
@@ -226,6 +244,42 @@ async function principal() {
         return res.end(js);
       } catch {
         return responder(res, 404, { erro: "Cliente não encontrado." });
+      }
+    }
+
+    /* ==========================================================================
+       O AVISO SONORO
+
+       Servido daqui pelo mesmo motivo do cliente: uma troca de som chega a
+       todas as instalações sem ninguém recopiar arquivo.
+
+       AQUI O CACHE É LONGO, ao contrário do cliente. O arquivo é imutável na
+       prática — trocar o som é trocar o arquivo, e nesse dia o `max-age`
+       atrasa a mudança em algumas horas para quem já tinha visitado. É um
+       preço barato perto de baixar 73 KB de MP3 a cada carregamento de página
+       do sistema, que é o que `no-cache` custaria aqui.
+       ========================================================================== */
+    if (req.method === "GET" && interno === "/aviso.mp3") {
+      const arquivoAviso = path.join(CONF.caminhos.publico, "aviso.mp3");
+      try {
+        const info = await fs.promises.stat(arquivoAviso);
+        const etag = `W/"${info.size.toString(36)}-${Math.floor(info.mtimeMs).toString(36)}"`;
+        if (req.headers["if-none-match"] === etag) {
+          res.writeHead(304, { ETag: etag });
+          return res.end();
+        }
+        const mp3 = await fs.promises.readFile(arquivoAviso);
+        res.writeHead(200, {
+          "Content-Type": "audio/mpeg",
+          "Content-Length": mp3.length,
+          "Cache-Control": "public, max-age=604800",
+          ETag: etag,
+          "X-Content-Type-Options": "nosniff",
+        });
+        return res.end(mp3);
+      } catch {
+        /* Sem o arquivo, o cliente cai no bipe gerado — o aviso não some. */
+        return responder(res, 404, { erro: "Aviso sonoro não encontrado." });
       }
     }
 

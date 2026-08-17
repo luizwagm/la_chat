@@ -590,18 +590,40 @@
      4. SOM (§14)
 
      O NAVEGADOR BLOQUEIA ÁUDIO ANTES DA PRIMEIRA INTERAÇÃO — e isso é correto.
-     O briefing manda não tentar contornar. Então:
+     O briefing manda não tentar contornar: nada de áudio antes de a pessoa
+     clicar em algo, e se o navegador recusar, o aviso visual continua. O som é
+     reforço, nunca o único sinal.
 
-       · nada de áudio antes de a pessoa clicar em algo;
-       · o som é GERADO (WebAudio), não baixado: um arquivo .mp3 seria mais um
-         recurso para carregar, mais um caminho para o CSP do hospedeiro
-         bloquear, e mais um pedido de rede por notificação;
-       · se o navegador recusar, o aviso visual continua funcionando. O som é
-         reforço, nunca o único sinal.
+     ---------------------------------------------------------------------------
+     O TOQUE É UM ARQUIVO, E O BIPE GERADO VIROU A RESERVA
+
+     Até a 0.5.x o som era sintetizado com um oscilador — dois tons curtos, em
+     volume de escritório. O cliente ouviu e pediu outro: mandou o toque dele e
+     disse que precisa ser ALTO, porque a recepção da clínica é barulhenta e o
+     aviso passava despercebido.
+
+     Então o arquivo entra, e o oscilador FICA — como caminho de volta. Ele
+     cobre três casos reais em que o MP3 não chega:
+
+       · o hospedeiro tem CSP com `media-src` fechado (o /restrito do BemEstar
+         tem CSP; foi o motivo de eu ter evitado arquivo na primeira versão);
+       · a rede caiu entre a página carregar e a mensagem chegar;
+       · o serviço do chat foi atualizado sem o `aviso.mp3` na pasta.
+
+     Em nenhum desses o aviso pode emudecer sem ninguém saber. O bipe é pior,
+     mas é um som — e um som ruim avisa; silêncio, não.
+
+     O arquivo é carregado UMA vez, na liberação do áudio (que já acontece na
+     primeira interação com a página), e fica decodificado na memória. Assim a
+     mensagem que chega não espera download nenhum para soar.
      ========================================================================== */
   const som = {
     ctx: null,
     liberado: false,
+    buffer: null,        // o toque decodificado, pronto para tocar
+    baixando: false,
+    url: null,           // definida pelo componente: <base>/aviso.mp3
+
     liberar() {
       /* Chamado na primeira interação com a PÁGINA — que é a interação do
          usuário que o navegador exige. Já foi "primeiro clique dentro do
@@ -615,24 +637,63 @@
         this.ctx = new C();
         if (this.ctx.state === "suspended") this.ctx.resume();
         this.liberado = true;
+        this.carregar();
       } catch { /* sem áudio: o aviso visual basta */ }
     },
+
+    carregar() {
+      if (this.buffer || this.baixando || !this.ctx || !this.url) return;
+      this.baixando = true;
+      fetch(this.url)
+        .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(r.status))))
+        .then((b) => this.ctx.decodeAudioData(b))
+        .then((buf) => { this.buffer = buf; })
+        .catch(() => { /* fica no bipe; nada quebra e nada é dito à toa */ })
+        .then(() => { this.baixando = false; });
+    },
+
     tocar() {
       if (!this.liberado || !this.ctx) return;
+      /* O contexto suspende sozinho em aba de segundo plano em alguns
+         navegadores. Sem religar, a mensagem que chega com a aba escondida —
+         exatamente quando o som mais importa — não soa. */
+      if (this.ctx.state === "suspended") { try { this.ctx.resume(); } catch { } }
       try {
-        const t = this.ctx.currentTime;
-        const osc = this.ctx.createOscillator();
-        const vol = this.ctx.createGain();
-        osc.type = "sine";
-        osc.frequency.setValueAtTime(660, t);
-        osc.frequency.setValueAtTime(880, t + 0.08);
-        /* Volume baixo e queda rápida: é um aviso de escritório, não um alarme. */
-        vol.gain.setValueAtTime(0.0001, t);
-        vol.gain.exponentialRampToValueAtTime(0.06, t + 0.01);
-        vol.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
-        osc.connect(vol); vol.connect(this.ctx.destination);
-        osc.start(t); osc.stop(t + 0.24);
+        if (this.buffer) return this.tocarArquivo();
+        this.tocarBipe();
+        this.carregar();     /* tenta de novo para a próxima mensagem */
       } catch { }
+    },
+
+    tocarArquivo() {
+      const fonte = this.ctx.createBufferSource();
+      const vol = this.ctx.createGain();
+      fonte.buffer = this.buffer;
+      /* ALTO, como foi pedido — e o ganho passa de 1 de propósito: o arquivo
+         do cliente tem pico em 0,43 da escala, então 1,0 sairia em menos da
+         metade do que o alto-falante consegue. 2,2 aproxima o pico do teto sem
+         estourar (0,43 × 2,2 = 0,94). Acima disso a onda ceifa e o toque
+         chia — mais volume que o material permite não existe. */
+      vol.gain.value = 2.2;
+      fonte.connect(vol); vol.connect(this.ctx.destination);
+      fonte.start();
+    },
+
+    tocarBipe() {
+      const t = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      const vol = this.ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(660, t);
+      osc.frequency.setValueAtTime(880, t + 0.08);
+      /* A reserva também subiu de volume: ela existe justamente para os casos
+         em que o toque do cliente não chegou, e um aviso inaudível ali seria
+         o mesmo que não avisar. */
+      vol.gain.setValueAtTime(0.0001, t);
+      vol.gain.exponentialRampToValueAtTime(0.35, t + 0.01);
+      vol.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
+      osc.connect(vol); vol.connect(this.ctx.destination);
+      osc.start(t); osc.stop(t + 0.32);
     },
   };
 
@@ -725,6 +786,13 @@
        É o único innerHTML do arquivo, e ele não recebe nada de fora.
        ==================================================================== */
     montar() {
+      /* O toque mora junto com o serviço do chat, e a base já sabe onde ele
+         está. Definir aqui — e não no módulo `som` — é o que permite ao
+         hospedeiro mover o chat de prefixo (`/chat` → `/restrito/chat`) sem
+         que o som fique apontando para o endereço antigo. Foi exatamente esse
+         o defeito que o passe teve quando o chat mudou de lugar. */
+      som.url = this.base + "/aviso.mp3";
+
       const estilo = document.createElement("style");
       estilo.textContent = CSS;
 
