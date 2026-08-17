@@ -2,17 +2,35 @@
 # ==========================================================================
 #  verificar.sh — confere a instalação ANTES de o cliente reclamar
 #
-#      ./verificar.sh                     confere o serviço local
-#      ./verificar.sh https://chat.x.com  confere também pelo lado de fora
+#      ./verificar.sh bemestar            confere a instância bemestar
+#      ./verificar.sh bemestar https://bemestarclinic.com   e o lado de fora
+#
+#  A INSTÂNCIA é obrigatória desde a 0.5.0: cada projeto tem processo, banco e
+#  chaves próprios, e conferir "o chat" sem dizer qual não quer dizer nada.
 #
 #  Cada checagem aqui existe por causa de um defeito que ACONTECE, e que é
 #  difícil de diagnosticar depois. A lista não é genérica.
 # ==========================================================================
 set -uo pipefail
 
-BASE="${1:-http://127.0.0.1:${PORT:-5197}}"
+INSTANCIA="${1:-}"
+if [ -z "$INSTANCIA" ]; then
+  echo ""
+  echo "  uso: ./verificar.sh <instancia> [url-publica]"
+  echo ""
+  echo "  instâncias instaladas:"
+  for a in /etc/lachat-*.env; do [ -e "$a" ] || continue
+    n="$(basename "$a" .env)"; n="${n#lachat-}"
+    echo "    $n  (porta $(grep -oP '^PORT=\K\d+' "$a" 2>/dev/null))"
+  done
+  echo ""
+  exit 1
+fi
+AMBIENTE_ARQ="${AMBIENTE_ARQ:-/etc/lachat-$INSTANCIA.env}"
+SERVICO="lachat@$INSTANCIA"
+PORTA_INST="$(grep -oP '^PORT=\K\d+' "$AMBIENTE_ARQ" 2>/dev/null || echo 5197)"
+BASE="${2:-http://127.0.0.1:$PORTA_INST}"
 PREFIXO="${CHAT_PREFIXO:-/chat}"
-AMBIENTE_ARQ="${AMBIENTE_ARQ:-/etc/lachat.env}"
 
 ok=0; aviso=0; erro=0
 verde()   { printf "  \033[32m✓\033[0m %s\n" "$1"; ok=$((ok+1)); }
@@ -23,7 +41,7 @@ secao()   { printf "\n  \033[1m%s\033[0m\n" "$1"; }
 echo ""
 echo "  LA Chat — verificação"
 echo "  ─────────────────────────────────────────────"
-echo "  Alvo: $BASE$PREFIXO"
+echo "  Instância: $INSTANCIA   Alvo: $BASE$PREFIXO"
 
 # ==========================================================================
 secao "1. O serviço responde"
@@ -31,8 +49,8 @@ secao "1. O serviço responde"
 SAUDE="$(curl -fsS --max-time 8 "$BASE$PREFIXO/saude" 2>/dev/null || true)"
 if [ -z "$SAUDE" ]; then
   vermelho "o chat não respondeu em $BASE$PREFIXO/saude"
-  echo "        systemctl status lachat --no-pager | tail -20"
-  echo "        journalctl -u lachat -n 50 --no-pager"
+  echo "        systemctl status $SERVICO --no-pager | tail -20"
+  echo "        journalctl -u $SERVICO -n 50 --no-pager"
 else
   verde "responde"
   case "$SAUDE" in
@@ -111,9 +129,9 @@ fi
 # A prova definitiva: o próprio serviço avisa no log quando o IP resolvido de
 # um visitante sai como loopback, que em produção nunca acontece de verdade.
 if command -v journalctl >/dev/null 2>&1; then
-  if journalctl -u lachat --since "24 hours ago" --no-pager 2>/dev/null | grep -q 'CHAT_PROXIES parece ERRADO'; then
+  if journalctl -u $SERVICO --since "24 hours ago" --no-pager 2>/dev/null | grep -q 'CHAT_PROXIES parece ERRADO'; then
     vermelho "o serviço JÁ DETECTOU CHAT_PROXIES errado nas últimas 24h"
-    echo "        journalctl -u lachat | grep -A12 'CHAT_PROXIES parece ERRADO'"
+    echo "        journalctl -u $SERVICO | grep -A12 'CHAT_PROXIES parece ERRADO'"
   fi
 fi
 

@@ -79,6 +79,15 @@ jobs:
       - name: Suítes (unidade, integração, tempo real, segurança, e2e)
         run: npm test
 
+      # O DEPLOY também é código, e é o único que roda uma vez só — no
+      # servidor do cliente, onde errar custa caro. O ensaio o executa inteiro
+      # num diretório temporário, com dublês de systemctl e nginx.
+      #
+      # Ele existe porque a primeira versão do deploy.sh foi entregue sem nunca
+      # ter rodado do começo ao fim.
+      - name: Ensaio do deploy (instala duas instâncias num sandbox)
+        run: bash ci/ensaiar.sh
+
       # O conector é copiado para dentro dos sites; a versão dele é o que
       # permite saber quem está atrasado. Um commit que muda o arquivo sem
       # subir a versão torna o `--conferir` cego.

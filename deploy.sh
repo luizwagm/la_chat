@@ -35,6 +35,17 @@ USUARIO="${USUARIO:-deploy}"
 GRUPO="${GRUPO:-deploy}"
 DADOS_BASE="${DADOS_BASE:-/var/lib/lachat}"
 
+# ==========================================================================
+#  Estes dois existem para o script poder ser ENSAIADO fora do servidor
+#  (ci/ensaiar.sh roda o fluxo inteiro num diretório temporário, com dublês de
+#  systemctl e nginx). Em produção ficam nos valores de sempre.
+#
+#  Não é preciosismo: a primeira versão deste arquivo foi entregue sem nunca
+#  ter rodado do começo ao fim, e o erro apareceu no servidor do cliente.
+# ==========================================================================
+ETC="${ETC:-/etc}"
+UNIDADES="${UNIDADES:-/etc/systemd/system}"
+
 msg() { printf "\n  \033[1m%s\033[0m\n" "$1"; }
 erro() { printf "\n  \033[31m✖ %s\033[0m\n\n" "$1"; exit 1; }
 
@@ -55,20 +66,33 @@ instalar_codigo() {
       --exclude '.env' --exclude 'testes/saida/' \
       ./ "$DESTINO/"
   fi
-  ( cd "$DESTINO" && sudo -u "$USUARIO" npm ci --omit=dev --no-audit --no-fund )
-
-  # O código NÃO precisa ser gravável pelo serviço: não sendo, uma falha na
-  # aplicação não consegue reescrever o próprio servidor.
-  chown -R root:"$GRUPO" "$DESTINO"
+  # ====================================================================
+  #  QUEM É DONO DO CÓDIGO — e por que NÃO é o root
+  #
+  #  A tentação é `chown -R root` para o serviço não conseguir reescrever o
+  #  próprio código. Só que quem ATUALIZA é o usuário `deploy`, com `git pull`
+  #  e `npm ci` — e num diretório do root os dois falham. A primeira
+  #  instalação funcionaria e a segunda entrega morreria com "permission
+  #  denied" em `.git/`.
+  #
+  #  A separação certa não é por dono, é pelo SYSTEMD: a unit tem
+  #  `ProtectSystem=strict` e só `/var/lib/lachat/%i` em `ReadWritePaths`.
+  #  Então o PROCESSO do chat não escreve no código nem sendo `deploy` — e o
+  #  `deploy` no shell continua podendo atualizar.
+  # ====================================================================
+  chown -R "$USUARIO:$GRUPO" "$DESTINO"
   chmod -R g+rX,o-rwx "$DESTINO"
 
+  ( cd "$DESTINO" && sudo -u "$USUARIO" npm ci --omit=dev --no-audit --no-fund )
+
   # A unit é MOLDE (`@`): um arquivo, N instâncias.
-  cp "$DESTINO/nginx/lachat@.service" /etc/systemd/system/lachat@.service
+  mkdir -p "$UNIDADES"
+  cp "$DESTINO/nginx/lachat@.service" "$UNIDADES/lachat@.service"
   systemctl daemon-reload
 
   # O `map` do Upgrade vale para o nginx inteiro, não por instância.
-  if [ -d /etc/nginx/conf.d ]; then
-    cp "$DESTINO/nginx/lachat-upgrade.conf" /etc/nginx/conf.d/
+  if [ -d "$ETC/nginx/conf.d" ]; then
+    cp "$DESTINO/nginx/lachat-upgrade.conf" "$ETC/nginx/conf.d/"
     nginx -t >/dev/null 2>&1 && systemctl reload nginx \
       || printf "  \033[31m✖\033[0m nginx -t falhou — o map NÃO foi ativado\n"
   fi
@@ -84,7 +108,7 @@ instalar_codigo() {
 if [ "${1:-}" = "--atualizar-todas" ]; then
   instalar_codigo
   achou=0
-  for amb in /etc/lachat-*.env; do
+  for amb in "$ETC"/lachat-*.env; do
     [ -e "$amb" ] || continue
     inst="$(basename "$amb" .env)"; inst="${inst#lachat-}"
     achou=1
@@ -97,7 +121,7 @@ if [ "${1:-}" = "--atualizar-todas" ]; then
       && echo "   ativa" \
       || { journalctl -u "lachat@$inst" -n 20 --no-pager; erro "lachat@$inst não subiu"; }
   done
-  [ "$achou" = "1" ] || erro "nenhuma instância encontrada (/etc/lachat-*.env vazio)"
+  [ "$achou" = "1" ] || erro "nenhuma instância encontrada ($ETC/lachat-*.env vazio)"
   msg "Todas as instâncias atualizadas."
   exit 0
 fi
@@ -118,7 +142,7 @@ case "$INSTANCIA" in
   *[!a-z0-9-]*) erro "o nome da instância aceita só letras minúsculas, números e hífen";;
 esac
 
-AMBIENTE="/etc/lachat-$INSTANCIA.env"
+AMBIENTE="$ETC/lachat-$INSTANCIA.env"
 DADOS="$DADOS_BASE/$INSTANCIA"
 
 instalar_codigo

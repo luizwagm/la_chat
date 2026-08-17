@@ -54,6 +54,29 @@ fica sem correção porque o A tem problema. Mas a entrega termina vermelha.
 - O sudoers usa `lachat@*.service`. É seguro pelo motivo certo: o glob do
   sudoers não casa com `/`, então não há como escapar para outra unit.
 
+### O deploy agora é ensaiado, e dois defeitos saíram disso
+
+`ci/ensaiar.sh` roda o `deploy.sh` inteiro num diretório temporário, com dublês
+de `systemctl`, `nginx`, `sudo` e `curl`. Ele instala duas instâncias, confere
+o arquivo de ambiente, o banco criado pela migração, a descoberta em
+`--atualizar-todas` e — o mais importante — que **reinstalar não regenera a
+chave**, que é o pior estrago possível. Roda no portão do CI.
+
+Existe porque a primeira versão do `deploy.sh` foi entregue sem nunca ter
+rodado do começo ao fim, e o erro apareceu no servidor do cliente. Dois
+defeitos que o ensaio pegou de imediato:
+
+- **o código passava a ser do `root`.** A intenção era o serviço não conseguir
+  reescrever o próprio código; o efeito seria a SEGUNDA entrega morrer, porque
+  quem atualiza é o `deploy`, com `git pull` e `npm ci`, e num diretório do
+  root os dois falham. A separação certa não é por dono: é o
+  `ProtectSystem=strict` da unit, com só o diretório de dados em
+  `ReadWritePaths`;
+- **`verificar.sh` conferia "o chat"**, no singular, apontando para
+  `/etc/lachat.env` e a porta 5197. Com uma instância por projeto isso não quer
+  dizer nada — passou a receber o nome da instância, e sem argumento lista as
+  instaladas.
+
 ---
 
 ## 0.4.1 — 16/08/2026 · entrega automática, e o conector que se atualiza sozinho
