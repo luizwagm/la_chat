@@ -61,7 +61,7 @@ function avatarSeguro(url) {
 /* Colunas do usuário que saem para a tela. `email` nunca vai junto por padrão:
    a lista de colegas não precisa dele, e mandá-lo espalharia dado pessoal por
    toda resposta que devolve uma pessoa. */
-const CAMPOS = `id, contexto_id, externo_id, nome, sobrenome, avatar, cargo,
+const CAMPOS = `id, contexto_id, externo_id, identidade, nome, sobrenome, avatar, cargo,
                 departamento, papel, situacao, ultimo_acesso, criado_em`;
 
 function paraFora(linha) {
@@ -116,11 +116,48 @@ function criar(Q) {
        ====================================================================== */
     async garantir(contextoId, dados) {
       const t = agora();
+
+      /* ======================================================================
+         A IDENTIDADE ESTÁVEL — quem a pessoa É, e não que conta ela usa
+
+         O `id` que o hospedeiro manda costuma ser o id da CONTA DE ACESSO, e
+         conta é descartável: o cliente do BemEstarClinic apagou o usuário de um
+         profissional, reativou a pessoa e criou uma conta nova. Conta nova = id
+         novo = pessoa nova aqui = **conversa nova**, e a barra lateral passou a
+         mostrar duas linhas com o mesmo nome — uma com o histórico, outra
+         vazia. Sem erro nenhum na tela.
+
+         Quando o hospedeiro sabe dizer quem a pessoa é por algo que sobrevive à
+         troca de conta — no BemEstar, o `profissional_id` —, ele manda isso em
+         `identidade`, e a busca passa a preferi-la.
+
+         A IDENTIDADE FICA EM COLUNA PRÓPRIA, e o `externo_id` continua sendo o
+         da conta. Tentei antes reescrever o próprio `externo_id`: funciona, e
+         cria uma armadilha de mão única — no dia em que o hospedeiro parasse de
+         mandar `identidade` (rollback, conector velho), ninguém casaria e a
+         equipe inteira nasceria duplicada, desativando quem já estava. O teste
+         pegou na hora: as sessões abertas responderam 401.
+
+         Com as duas chaves lado a lado, voltar atrás continua encontrando as
+         mesmas pessoas.
+         ====================================================================== */
+      const identidade = dados.identidade ? String(dados.identidade) : "";
       const externo = String(dados.id);
 
-      const achado = await Q.get(
-        `SELECT ${CAMPOS} FROM usuarios WHERE contexto_id = ? AND externo_id = ?`,
-        contextoId, externo);
+      let achado = identidade
+        ? await Q.get(
+          `SELECT ${CAMPOS} FROM usuarios WHERE contexto_id = ? AND identidade = ?`,
+          contextoId, identidade)
+        : null;
+
+      /* Sem identidade, ou identidade ainda não vista: cai no id da conta —
+         que é como todo mundo entrou até aqui. É neste passo que a pessoa
+         ganha a identidade pela primeira vez, no UPDATE abaixo. */
+      if (!achado) {
+        achado = await Q.get(
+          `SELECT ${CAMPOS} FROM usuarios WHERE contexto_id = ? AND externo_id = ?`,
+          contextoId, externo);
+      }
 
       if (achado) {
         /* O hospedeiro é a fonte da verdade sobre nome, cargo e foto: se
@@ -130,14 +167,34 @@ function criar(Q) {
            `desativarAusentes`), e quem VOLTA precisa voltar de verdade — sem
            isto, reativar um funcionário no sistema do cliente o deixaria mudo
            no chat, existindo na tabela e fora de toda lista. */
-        await Q.run(
-          `UPDATE usuarios SET nome = ?, sobrenome = ?, email = ?, avatar = ?,
-                  cargo = ?, departamento = ?, papel = ?, situacao = 'ativa',
-                  ultimo_acesso = ?, atualizado_em = ?
+        /* `externo_id` acompanha a conta ATUAL, e `identidade` carimba quem é a
+           pessoa. Assim, depois de recadastrada, ela continua sendo a mesma
+           linha — com as conversas, as mensagens e as não-lidas onde estavam —
+           e o `externo_id` passa a apontar para a conta que ela usa hoje. */
+        const gravar = async (comExterno) => Q.run(
+          `UPDATE usuarios SET externo_id = ?, identidade = ?, nome = ?, sobrenome = ?,
+                  email = ?, avatar = ?, cargo = ?, departamento = ?, papel = ?,
+                  situacao = 'ativa', ultimo_acesso = ?, atualizado_em = ?
              WHERE id = ?`,
+          comExterno, identidade || achado.identidade || "",
           dados.nome, dados.sobrenome || "", cripto.cifrar(dados.email || ""),
           avatarSeguro(dados.avatar), dados.cargo || "", dados.departamento || "",
           dados.papel === "admin" ? "admin" : "membro", t, t, achado.id);
+
+        try {
+          await gravar(externo);
+        } catch (e) {
+          /* O `externo_id` tem índice único por contexto. Se a conta que o
+             hospedeiro está mandando agora ainda pertence a OUTRA linha (um
+             registro velho da mesma pessoa, de antes da identidade existir),
+             tomá-la aqui estoura o índice e derruba a sincronização inteira
+             com 500 — todo o elenco por causa de uma pessoa.
+
+             Então a linha certa fica com o nome, a foto e o cargo atualizados,
+             só não muda de conta. A duplicata continua encontrável e é assunto
+             da fusão de histórico, que é ato explícito e não tem volta. */
+          await gravar(achado.externo_id);
+        }
 
         return paraFora({ ...achado, nome: dados.nome, sobrenome: dados.sobrenome || "" });
       }
@@ -145,11 +202,11 @@ function criar(Q) {
       const id = ulid();
       try {
         await Q.run(
-          `INSERT INTO usuarios (id, contexto_id, externo_id, nome, sobrenome, email,
+          `INSERT INTO usuarios (id, contexto_id, externo_id, identidade, nome, sobrenome, email,
                                  avatar, cargo, departamento, papel, situacao,
                                  ultimo_acesso, criado_em, atualizado_em)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ativa', ?, ?, ?)`,
-          id, contextoId, externo, dados.nome, dados.sobrenome || "",
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ativa', ?, ?, ?)`,
+          id, contextoId, externo, identidade, dados.nome, dados.sobrenome || "",
           cripto.cifrar(dados.email || ""), avatarSeguro(dados.avatar), dados.cargo || "",
           dados.departamento || "", dados.papel === "admin" ? "admin" : "membro", t, t, t);
 
@@ -236,10 +293,22 @@ function criar(Q) {
       const presentes = [...new Set((externosPresentes || []).map(String))];
       if (!presentes.length) return 0;
       const marcas = presentes.map(() => "?").join(",");
+      /* AS DUAS CHAVES CONTAM COMO PRESENÇA.
+
+         O hospedeiro manda a lista com o id da CONTA; quem já ganhou identidade
+         tem `externo_id` da conta atual e `identidade` própria. Olhar só uma
+         das colunas desativa gente que está na lista — e desativar é justamente
+         o que tira a pessoa de todas as telas e derruba a sessão dela.
+
+         Foi o que aconteceu na primeira versão desta mudança: a suíte passou a
+         responder 401 no meio, porque a dona da sessão tinha acabado de ser
+         "removida do cadastro" sem ter saído de lugar nenhum. */
       const alvos = await Q.all(
         `SELECT id FROM usuarios
-          WHERE contexto_id = ? AND situacao = 'ativa' AND externo_id NOT IN (${marcas})`,
-        contextoId, ...presentes);
+          WHERE contexto_id = ? AND situacao = 'ativa'
+            AND externo_id NOT IN (${marcas})
+            AND (identidade = '' OR identidade NOT IN (${marcas}))`,
+        contextoId, ...presentes, ...presentes);
       /* `desativada`, e não `bloqueada`: são coisas diferentes. Bloqueio é ato
          de moderação, feito por um admin dentro do chat; desativação é o
          reflexo do cadastro do hospedeiro, e volta sozinha se a pessoa voltar.

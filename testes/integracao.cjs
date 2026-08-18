@@ -109,8 +109,78 @@ async function rodar() {
     P.ok((await nomesDoElenco()).some((n) => n.includes("Novata")),
       "e a pessoa VOLTA para a lista");
 
-    /* Devolve o elenco ao que era, para as seções seguintes. */
-    await mandarElenco(EQUIPE);
+    /* ====================================================================
+       A CONTA MUDA, A PESSOA NÃO
+
+       O cliente do BemEstarClinic removeu um profissional, reativou e criou
+       uma conta NOVA para ele. Conta nova = id novo = pessoa nova aqui, e a
+       barra lateral passou a mostrar DUAS conversas com o mesmo nome — uma
+       com o histórico e outra vazia.
+
+       Com `identidade`, o chat reconhece que é a mesma pessoa e MIGRA o
+       registro: o `externo_id` passa a ser a identidade e as conversas, as
+       mensagens e as não-lidas ficam onde estavam.
+       ==================================================================== */
+    const COM_IDENTIDADE = EQUIPE.map((u) => ({ ...u, identidade: "prof-" + u.id }));
+    await mandarElenco(COM_IDENTIDADE);
+
+    const antesDaTroca = (await ana.vai("/pessoas")).dados.pessoas.length;
+
+    /* Mesma gente, contas com ids NOVOS — só a identidade se repete. */
+    const CONTAS_NOVAS = COM_IDENTIDADE.map((u) => ({ ...u, id: "recriado-" + u.id }));
+    const migrou = await mandarElenco(CONTAS_NOVAS);
+    P.eq(migrou.status, 200, "elenco com contas recriadas sincroniza");
+    P.eq(migrou.dados.desativados, 0,
+      "e NINGUÉM é desativado — a chave de presença acompanhou a identidade");
+    P.eq((await ana.vai("/pessoas")).dados.pessoas.length, antesDaTroca,
+      "o número de pessoas não muda: não nasceu ninguém duplicado");
+
+    /* A conversa que a Ana já tinha com o Bruno continua sendo A MESMA — é o
+       ponto todo: o histórico não se parte quando a conta é refeita. */
+    const antesConv = (await ana.vai("/conversas")).dados.conversas.length;
+    await mandarElenco(CONTAS_NOVAS);
+    P.eq((await ana.vai("/conversas")).dados.conversas.length, antesConv,
+      "e a lista de conversas continua com o mesmo tamanho");
+
+    /* Devolve as contas originais, ainda com identidade: é ela que reconhece a
+       gente e faz o `externo_id` apontar de volta para a conta de sempre. */
+    await mandarElenco(COM_IDENTIDADE);
+
+    /* E AGORA O CAMPO SOME. Hospedeiro velho, rollback, conector desatualizado
+       — o elenco volta a ser só id e nome. Ninguém pode ser desativado e
+       ninguém pode nascer de novo: é o `externo_id` que segura a barra.
+
+       Esta é a garantia contra a armadilha de mão única. A primeira versão da
+       mudança reescrevia o próprio `externo_id` com a identidade, e a suíte
+       morreu aqui com 401 — a dona da sessão tinha sido "removida do cadastro"
+       sem ter saído de lugar nenhum. */
+    const semCampo = await mandarElenco(EQUIPE);
+    P.eq(semCampo.dados.desativados, 0,
+      "tirar a identidade do elenco NÃO desativa ninguém");
+    P.eq((await ana.vai("/pessoas")).dados.pessoas.length, antesDaTroca,
+      "e nem faz nascer gente duplicada");
+    P.eq((await ana.vai("/eu")).status, 200, "a sessão de quem estava dentro sobrevive");
+
+    /* ENTRAR TAMBÉM CRIA PESSOA — e é por isso que o PASSE carrega a
+       identidade, não só o elenco.
+
+       A conta da Carla foi refeita e ela entra pelo id novo. Se só o elenco
+       soubesse quem ela é, este login abriria a SEGUNDA ficha dela e a conversa
+       se partiria em duas — exatamente o defeito que veio da clínica, só que
+       entrando pela outra porta. */
+    const carlaRecriada = await entrar(chat, {
+      ...CARLA, id: "conta-refeita-carla", identidade: "prof-" + CARLA.id,
+    });
+    P.eq(carlaRecriada.usuario.id, carla.usuario.id,
+      "entrar por uma conta NOVA, com a mesma identidade, é a MESMA pessoa");
+    P.eq((await ana.vai("/pessoas")).dados.pessoas.length, antesDaTroca,
+      "e o login não fez nascer ninguém");
+
+    /* O hospedeiro sincroniza depois do login e devolve a conta de sempre. */
+    const depoisDoLogin = await mandarElenco(COM_IDENTIDADE);
+    P.eq(depoisDoLogin.dados.desativados, 0,
+      "a sincronização seguinte não desativa a Carla, que acabou de entrar");
+    P.eq((await carla.vai("/eu")).status, 200, "e a sessão antiga dela continua de pé");
 
     /* ==================================================================== */
     P.secao("conversa e mensagens");

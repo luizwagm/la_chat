@@ -24,6 +24,9 @@ const path = require("node:path");
 
 const SUITES = [
   { nome: "unidade", arquivo: "unidade.cjs" },
+  /* Fusão logo depois da unidade: não sobe servidor, roda em banco de
+     brinquedo e é a única operação sem volta do sistema. */
+  { nome: "fusão", arquivo: "fusao.cjs" },
   { nome: "integração", arquivo: "integracao.cjs" },
   { nome: "tempo real", arquivo: "realtime.cjs" },
   { nome: "segurança", arquivo: "seguranca.cjs" },

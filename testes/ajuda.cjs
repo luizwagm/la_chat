@@ -238,7 +238,8 @@ function criarAba(base) {
 function emitirPasse(segredo, usuario, { contexto = "empresa-teste", validade = 60, jti = null, iat = null } = {}) {
   const agora = iat ?? Math.floor(Date.now() / 1000);
   const corpo = {
-    sub: String(usuario.id), nome: usuario.nome, sobrenome: usuario.sobrenome || "",
+    sub: String(usuario.id), ident: usuario.identidade || "",
+    nome: usuario.nome, sobrenome: usuario.sobrenome || "",
     email: usuario.email || "", avatar: usuario.avatar || "", cargo: usuario.cargo || "",
     departamento: usuario.departamento || "", papel: usuario.papel === "admin" ? "admin" : "membro",
     ctx: contexto, iat: agora, exp: agora + validade,

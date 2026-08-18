@@ -109,6 +109,12 @@ function conectorChat(opcoes = {}) {
     const iat = Math.floor(Date.now() / 1000);
     const corpo = {
       sub: String(u.id),
+      /* QUEM A PESSOA É, quando o site sabe dizer por algo que sobrevive à
+         troca de conta (no BemEstarClinic, o `profissional_id`). Sem isto no
+         passe, entrar por uma conta que não seja a última sincronizada cria
+         uma SEGUNDA pessoa no chat — e a conversa se parte em duas.
+         Opcional: quem não manda segue funcionando pelo id da conta. */
+      ident: String(u.identidade || "").slice(0, 120),
       nome: String(u.nome).slice(0, 120),
       sobrenome: String(u.sobrenome || "").slice(0, 120),
       email: String(u.email || "").slice(0, 200),

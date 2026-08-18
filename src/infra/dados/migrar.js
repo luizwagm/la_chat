@@ -31,6 +31,7 @@ const { abrir, agora } = require("./banco.js");
    de ordem cria tabela antes da que ela referencia. */
 const MIGRACOES = [
   require("./migracoes/001-inicial.js"),
+  require("./migracoes/002-identidade.js"),
 ];
 
 async function garantirRegistro(Q) {

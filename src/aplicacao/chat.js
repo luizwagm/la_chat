@@ -106,6 +106,11 @@ function criarServico({ repos, conf, barramento, limites, armazenamento, sessoes
         if (!u || !u.id || !u.nome) continue;
         await repos.usuarios.garantir(conf.contexto, {
           id: String(u.id), nome: String(u.nome).slice(0, 120),
+          /* A identidade que sobrevive à troca de conta de acesso — no
+             BemEstar, o profissional. Ver o comentário longo em
+             `repositorios/usuarios.js`: é o que impede o mesmo profissional
+             de virar duas pessoas (e duas conversas) depois de recadastrado. */
+          identidade: String(u.identidade || "").slice(0, 120),
           sobrenome: String(u.sobrenome || "").slice(0, 120),
           email: String(u.email || "").slice(0, 200),
           avatar: String(u.avatar || "").slice(0, 500),
@@ -120,9 +125,18 @@ function criarServico({ repos, conf, barramento, limites, armazenamento, sessoes
          "as pessoas do sistema", e não "as pessoas que algum dia existiram".
          Só roda com elenco não vazio — uma lista vazia é bem mais provável ser
          defeito do hospedeiro do que a empresa ter demitido todo mundo. */
+      /* A LISTA DE PRESENTES LEVA AS DUAS CHAVES de cada pessoa: o id da conta
+         e a identidade. O repositório confere as duas colunas, e mandar só uma
+         desativaria quem está na lista — derrubando a sessão de quem não saiu
+         de lugar nenhum. */
+      const presentes = [];
+      for (const u of usuarios) {
+        if (!u || !u.id) continue;
+        presentes.push(String(u.id));
+        if (u.identidade) presentes.push(String(u.identidade));
+      }
       const desativados = n
-        ? await repos.usuarios.desativarAusentes(
-          conf.contexto, usuarios.filter((u) => u && u.id).map((u) => String(u.id)))
+        ? await repos.usuarios.desativarAusentes(conf.contexto, presentes)
         : 0;
 
       const depois = await repos.usuarios.elenco(conf.contexto);

@@ -99,6 +99,17 @@ function criarPasses({ segredo, validadeSegundos = 60 }) {
       const iat = Math.floor(Date.now() / 1000);
       const corpo = {
         sub: String(usuario.id),
+        /* QUEM A PESSOA É, quando o hospedeiro sabe dizer por algo que
+           sobrevive à troca de conta (ver a migração 002). O passe precisa
+           carregá-la porque ENTRAR também cria pessoa: se só o elenco a
+           levasse, um login por uma conta que não fosse a última sincronizada
+           criaria a segunda ficha — que é exatamente o defeito que a
+           identidade veio consertar.
+
+           Vai DENTRO do corpo assinado, como todo o resto: uma identidade que
+           viajasse fora da assinatura seria um campo pelo qual alguém escolhe
+           de quem quer ser a conversa. */
+        ident: String(usuario.identidade || "").slice(0, 120),
         nome: String(usuario.nome).slice(0, 120),
         sobrenome: String(usuario.sobrenome || "").slice(0, 120),
         email: String(usuario.email || "").slice(0, 200),
@@ -173,6 +184,7 @@ function criarPasses({ segredo, validadeSegundos = 60 }) {
         contexto: corpo.ctx || "padrao",
         usuario: {
           id: corpo.sub,
+          identidade: corpo.ident || "",
           nome: corpo.nome,
           sobrenome: corpo.sobrenome || "",
           email: corpo.email || "",

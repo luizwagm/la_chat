@@ -5,6 +5,71 @@ recurso, 3ª para correção. Nenhuma casa para no 9.
 
 ---
 
+## 0.7.0 — 17/08/2026 · a pessoa deixou de ser a conta dela
+
+O cliente do BemEstarClinic removeu o usuário de um profissional, reativou a
+pessoa e criou uma conta NOVA para ela. O `profissional_id` era o mesmo; o id
+da conta, não. A barra lateral passou a mostrar **duas conversas com o mesmo
+nome** — uma com o histórico e outra vazia. Nenhum erro em lugar nenhum.
+
+### `identidade`: uma coluna nova, e não o `externo_id` reescrito
+
+O hospedeiro passa a poder mandar, além do id da conta, quem a pessoa **é** por
+algo que sobrevive à troca de conta. No BemEstar isso é `prof-<profissional_id>`.
+A busca prefere a identidade e cai no `externo_id`.
+
+A primeira tentativa foi migrar o próprio `externo_id` para a identidade — e ela
+funciona, criando uma armadilha de mão única: no dia em que o hospedeiro
+parasse de mandar o campo (rollback, conector velho), ninguém casaria, a equipe
+inteira nasceria duplicada e todo mundo que já estava seria desativado de
+quebra. A suíte pegou na hora — as sessões abertas responderam 401. Com as
+duas chaves lado a lado, voltar atrás continua encontrando as mesmas pessoas.
+
+O campo é **opcional**: quem não manda segue funcionando exatamente como antes,
+e existe teste provando isso — o elenco vai e volta sem o campo, e ninguém é
+desativado nem duplicado.
+
+### O PASSE também carrega a identidade
+
+Entrar cria pessoa, exatamente como o elenco cria. Se só o elenco soubesse quem
+a pessoa é, um login por uma conta que não fosse a última sincronizada abriria a
+segunda ficha — o mesmo defeito entrando pela outra porta. A identidade viaja
+dentro do corpo **assinado** do passe: fora da assinatura, ela seria um campo
+pelo qual alguém escolhe de quem quer ser a conversa.
+
+### `desativarAusentes` conta as DUAS chaves
+
+O hospedeiro manda a lista com o id da conta; quem já tem identidade tem a
+coluna própria preenchida. Olhar só uma das colunas desativa gente que está na
+lista — e desativar é o que tira a pessoa de todas as telas e derruba a sessão
+dela.
+
+### `ferramentas/fundir-pessoas.cjs` — para o estrago que já existe
+
+A identidade **previne** casos novos; ela não junta o que já se partiu. Fundir
+move histórico de conversa entre pessoas e não tem volta, então a ferramenta é
+de linha de comando e tem três cercas: sem argumento ela só **relata** os
+candidatos, com dois ids ela **simula e para**, e só escreve com `--aplicar`
+mais o nome de quem sai digitado por extenso.
+
+Ela emenda as conversas diretas (renumerando `seq` pela hora, que é a única
+linha do tempo comum aos dois lados), acerta o índice cego da busca, resolve os
+grupos onde as duas fichas estavam dentro, e prefixa o `externo_id` da ficha
+dissolvida — sem isso, a conta antiga voltando do hospedeiro ressuscitaria a
+ficha vazia e desfaria a fusão na sincronização seguinte.
+
+Um detalhe que só o teste mostrou: `id_cliente` é único por
+(conversa, autor, id_cliente) e vem do **navegador** — as duas conversas sendo
+juntadas têm um `c1` cada, do mesmo autor. Mover sem reescrevê-lo estoura o
+índice no meio da fusão.
+
+### Suíte nova: `testes/fusao.cjs` (25 verificações)
+
+Banco de brinquedo próprio, criado e apagado ali. Com as quatro verificações
+novas na integração, o total vai a **404 verificações**.
+
+---
+
 ## 0.6.0 — 17/08/2026 · o aviso sonoro passou a ser um arquivo
 
 Pedido do cliente do BemEstarClinic: o toque tinha de ser **o dele**, e **alto**.
