@@ -5,6 +5,24 @@ recurso, 3ª para correção. Nenhuma casa para no 9.
 
 ---
 
+## 0.8.0 — 19/08/2026 · uma instância por cliente, do mesmo código
+
+O Instituto Kenósis pediu chat com **conexão própria** — e a razão de fundo é
+boa: o `contexto` já separa as conversas dentro de um serviço, mas o SEGREDO
+do passe, o banco e a chave de cifragem eram um só. Quem comprometesse o
+ambiente de um site conseguiria forjar passe para o contexto do outro.
+
+**`instancia.js`**: `node instancia.js .env.kenosis` sobe o chat com o
+ambiente daquele arquivo — porta, banco, anexos, os três segredos e as
+origens próprios. O lançador **exige** as chaves que distinguem uma instância
+da outra (PORT, CHAT_SQLITE, CHAT_ARQUIVOS, segredos, origens): chave
+esquecida herdaria em silêncio o valor do `.env` padrão, e duas instâncias
+dividindo o mesmo banco é exatamente o acidente que ele existe para impedir.
+
+Em produção o lançador nem é usado: uma unit por instância com
+`EnvironmentFile=/etc/lachat-<cliente>.env` faz o mesmo. O `.env.kenosis`
+fica fora do git pelo padrão `.env.*` que já existia.
+
 ## 0.7.0 — 17/08/2026 · a pessoa deixou de ser a conta dela
 
 O cliente do BemEstarClinic removeu o usuário de um profissional, reativou a
