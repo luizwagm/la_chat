@@ -5,6 +5,28 @@ recurso, 3ª para correção. Nenhuma casa para no 9.
 
 ---
 
+## 0.15.1 — 23/08/2026 · o erro de ICE diz QUAL servidor falhou
+
+A frase "Não foi possível falar com o servidor de relay" apareceu numa
+instalação onde o relay estava **perfeito** — provado de fora, com a mesma
+credencial que o chat emite: TCP e UDP chegam, o coturn autentica e concede
+alocação.
+
+O problema da mensagem era não dizer **de qual endereço** ela falava. A lista de
+`iceServers` tem mais de um, e o erro de um deles produzia uma frase que mandava
+investigar o outro.
+
+Agora a URL entra na frase, e o erro bruto — código, texto, endereço, porta,
+horário — fica guardado no componente para quem for consertar:
+
+    document.querySelector("la-chat").video.errosIce
+
+A tradução continua para quem está na reunião; o detalhe fica para quem
+diagnostica. São públicos diferentes, e antes os dois recebiam a mesma frase
+curta demais para um e técnica demais para o outro.
+
+---
+
 ## 0.15.0 — 23/08/2026 · só administrador cria link, e o relay é testado de verdade
 
 ### Criar reunião por link virou ato de administrador

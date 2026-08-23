@@ -486,10 +486,31 @@
       pc.onicecandidateerror = (e) => {
         const cod = Number(e?.errorCode || 0);
         if (!cod || cod === 600) return;   // 600 = "não há mais candidatos", normal
-        let frase = "";
-        if (cod === 401 || cod === 403) frase = "O servidor de relay recusou a credencial.";
-        else if (cod === 701) frase = "Não foi possível falar com o servidor de relay.";
-        if (frase) aoErro(Object.assign(new Error(frase), { codigoIce: cod, url: e?.url }));
+
+        /* ==================================================================
+           O ERRO BRUTO FICA GUARDADO, e não só traduzido.
+
+           A frase na tela serve a quem está na reunião. Quem vai CONSERTAR
+           precisa de outra coisa: qual servidor falhou, com que código, com
+           que texto. Sem isso, "não falei com o relay" manda investigar o
+           relay — e já aconteceu de o relay estar perfeito e o erro ser de
+           outro endereço da lista.
+
+           Dez basta: o que interessa é o começo da negociação.
+           ================================================================== */
+        const registro = {
+          quando: new Date().toISOString(),
+          codigo: cod,
+          url: e?.url || "",
+          texto: e?.errorText || "",
+          endereco: e?.address || "",
+          porta: e?.port || 0,
+        };
+        aoErro(Object.assign(new Error(
+          cod === 401 || cod === 403 ? "O servidor de relay recusou a credencial."
+          : cod === 701 ? "Não foi possível falar com o servidor de relay."
+          : "Erro de negociação (" + cod + ")."
+        ), { codigoIce: cod, registro }));
       };
 
       pc.oniceconnectionstatechange = () => {
@@ -859,7 +880,18 @@
           /* Erro de ICE com diagnóstico vai para a TELA. O resto continua no
              console: ruído de negociação não interessa a quem está reunido. */
           if (e?.codigoIce) {
-            this.avisoDeVideo(e.message + " Avise quem cuida do servidor.");
+            /* O registro fica no componente, para quem for diagnosticar:
+                 document.querySelector("la-chat").video.errosIce          */
+            const v = this.video;
+            if (v) {
+              v.errosIce = v.errosIce || [];
+              if (v.errosIce.length < 10) v.errosIce.push(e.registro);
+            }
+            /* A URL entra na frase: sem ela, "não falei com o relay" manda
+               investigar o relay mesmo quando quem falhou foi outro endereço
+               da lista — um STUN, por exemplo. */
+            const onde = e.registro?.url ? " (" + e.registro.url + ")" : "";
+            this.avisoDeVideo(e.message + onde);
             clearTimeout(this._avisoIce);
             this._avisoIce = setTimeout(() => this.avisoDeVideo(""), 20000);
           }
