@@ -399,6 +399,39 @@ elif [ -n "$TURN_CONF" ]; then
     echo "        sudo sed -i \"s|^CHAT_TURN_SEGREDO=.*|CHAT_TURN_SEGREDO=\$(sed -n 's/^static-auth-secret=//p' $ETC_TURN | tail -1)|\" $AMBIENTE_ARQ"
   fi
 
+  # ======================================================================
+  #  O RELAY FUNCIONA MESMO? — pedir uma alocação, e não ler configuração
+  #
+  #  Ler o `turnserver.conf` responde "está escrito certo?". Não responde
+  #  "funciona?", e as duas perguntas se separam em silêncio: segredo com
+  #  espaço no fim, coturn que subiu antes do certificado, porta ocupada.
+  #
+  #  Aqui a conta é a MESMA que o chat faz — HMAC-SHA1 do segredo sobre
+  #  `<validade>:<usuário>` — e o pedido é o mesmo que o navegador fará. Se
+  #  passar, o relay e a credencial estão provados; o que sobrar de problema
+  #  está no caminho de FORA para cá, e o relatório diz isso.
+  #
+  #  Uma sessão inteira de investigação virou esta seção.
+  # ======================================================================
+  if [ -r "$ETC_TURN" ] && command -v turnutils_uclient >/dev/null 2>&1; then
+    ALVO_TURN="$(printf '%s' "$TURN_CONF" | sed 's/^turns\?://; s/^stun://; s/:.*$//; s/,.*$//')"
+    if [ -n "$ALVO_TURN" ] && [ -n "$SEGREDO_TURN" ]; then
+      USUARIO_T="$(( $(date +%s) + 600 )):verificar"
+      SENHA_T="$(printf '%s' "$USUARIO_T" | openssl dgst -sha1 -hmac "$SEGREDO_TURN" -binary | base64)"
+      SAIDA_T="$(timeout 25 turnutils_uclient -T -u "$USUARIO_T" -w "$SENHA_T" \
+                   -p 3478 -n 1 "$ALVO_TURN" 2>&1 || true)"
+      if printf '%s' "$SAIDA_T" | grep -q 'tot_recv_msgs=[1-9]'; then
+        verde "o relay ACEITOU a credencial e devolveu tráfego (testado de dentro)"
+        amarelo "isto não prova o acesso de FORA — ver a nota no fim"
+      elif printf '%s' "$SAIDA_T" | grep -qiE '401|unauthor|credential'; then
+        vermelho "o relay RECUSOU a credencial (401) — o segredo não bate"
+      else
+        amarelo "o teste do relay não concluiu — rode à mão para ver o motivo:"
+        echo "        turnutils_uclient -T -u '<usuario>' -w '<senha>' -p 3478 $ALVO_TURN"
+      fi
+    fi
+  fi
+
   # As travas de rede do relay. Sem elas, quem tem um convite de reunião
   # alcança a rede interna deste servidor — ver docs/PARECER-SEGURANCA.md (A1).
   if [ -r "$ETC_TURN" ]; then
@@ -425,6 +458,25 @@ else
 fi
 
 # ==========================================================================
+#  O QUE ESTE RELATÓRIO NÃO ALCANÇA
+#
+#  Tudo aqui é medido DE DENTRO do servidor. Um relay que aceita a credencial
+#  localmente e não recebe pacote nenhum da internet passa por todas as
+#  conferências acima — e é o caso mais comum quando "o chat funciona e o link
+#  não": há um firewall de NUVEM, no painel do provedor, além do ufw.
+#
+#  A prova de fora exige um cliente de fora. Do navegador de qualquer máquina:
+#  abrir uma reunião por link e olhar o console — o cliente do chat agora
+#  traduz o erro de ICE (401/403 = credencial recusada, 701 = não falei com o
+#  relay).
+# ==========================================================================
+if [ "$VIDEO_CONF" = "1" ] && [ -n "$TURN_CONF" ]; then
+  echo ""
+  echo "  Nota: o relay foi testado DE DENTRO. Se as reuniões por link ainda"
+  echo "  não conectarem, confira o firewall de NUVEM do provedor — UDP 3478"
+  echo "  e a faixa 49152-65535/udp precisam estar abertas lá também."
+fi
+
 echo ""
 echo "  ─────────────────────────────────────────────"
 printf "  %d ok · %d avisos · %d erros\n\n" "$ok" "$aviso" "$erro"

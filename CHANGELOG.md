@@ -5,6 +5,52 @@ recurso, 3ª para correção. Nenhuma casa para no 9.
 
 ---
 
+## 0.15.0 — 23/08/2026 · só administrador cria link, e o relay é testado de verdade
+
+### Criar reunião por link virou ato de administrador
+
+Todo funcionário pode LIGAR para um colega — é conversa entre quem já está
+dentro. Criar um link é abrir uma porta que responde a quem não tem credencial
+nenhuma, com a banda e o nome da empresa atrás dela. **Essa decisão não pertence
+a cada pessoa**, e esta é a única rota do chat que precisa desse degrau,
+justamente porque é a única que fabrica acesso externo.
+
+Revogar e remover continuam com quem CRIOU a sala: tirar alguém de uma reunião
+não pode depender de achar um administrador.
+
+Na tela, a aba "Reuniões" só aparece para quem pode criar — uma aba que só sabe
+dizer "você não pode" ocupa espaço e ensina a ignorar o menu. A tranca de
+verdade é a do servidor.
+
+### O verificar.sh EXERCITA o relay em vez de ler configuração
+
+Ler o `turnserver.conf` responde *"está escrito certo?"*. Não responde
+*"funciona?"* — e as duas perguntas se separam em silêncio: segredo com espaço
+no fim, coturn que subiu antes do certificado, porta ocupada.
+
+Agora o relatório faz a MESMA conta que o chat (HMAC-SHA1 sobre
+`<validade>:<usuário>`) e pede uma alocação de verdade, pelo `turnutils_uclient`.
+Passou, relay e credencial estão provados.
+
+E ele diz o que **não** alcança: tudo é medido de dentro do servidor. Um relay
+que aceita a credencial localmente e não recebe pacote nenhum da internet passa
+por todas as conferências — e é o caso mais comum de "o chat funciona e o link
+não", porque há um firewall de NUVEM, no painel do provedor, além do ufw.
+
+Uma sessão inteira de investigação virou essa seção.
+
+### Migração 005 — arquivar e remover
+
+Base para o menu de conversas. `arquivada_em` fica em `conversa_membros`
+(é de quem arquivou, e de mais ninguém); `apagada_por` fica em `conversas`
+(é da conversa, e só o administrador remove).
+
+**Remover não apaga linha nenhuma.** É uma marca: a conversa e as mensagens
+continuam no banco, invisíveis. Remoção de conversa é ato de administrador sobre
+o histórico dos OUTROS, e um clique errado ali não pode ser definitivo.
+
+---
+
 ## 0.14.0 — 23/08/2026 · a reunião por link, usada de verdade
 
 Quatro problemas relatados por quem estava usando, e a causa do quinto.
