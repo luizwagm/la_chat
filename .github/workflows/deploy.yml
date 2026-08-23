@@ -76,6 +76,16 @@ jobs:
             echo "há .sh com CRLF — converta para LF"; exit 1
           fi
 
+      # UM \K SEM A BARRA vira a letra K: o padrão nunca casa, e a checagem
+      # passa a aprovar tudo em silêncio — ou, pior, a reprovar o que está
+      # certo. Aconteceu no verificar.sh, e o custo foi mandar procurar defeito
+      # numa instalação que estava correta.
+      - name: Nenhum \K perdido em grep -oP
+        run: |
+          if grep -rn "grep -oP '[^']*=K" --include='*.sh' . | grep -v node_modules; then
+            echo "há padrão PCRE com o \K sem a barra invertida"; exit 1
+          fi
+
       - name: Suítes (unidade, integração, tempo real, segurança, e2e)
         run: npm test
 

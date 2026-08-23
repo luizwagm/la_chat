@@ -28,7 +28,28 @@ if [ -z "$INSTANCIA" ]; then
 fi
 AMBIENTE_ARQ="${AMBIENTE_ARQ:-/etc/lachat-$INSTANCIA.env}"
 SERVICO="lachat@$INSTANCIA"
-PORTA_INST="$(grep -oP '^PORT=\K\d+' "$AMBIENTE_ARQ" 2>/dev/null || echo 5197)"
+# ==========================================================================
+#  LER UMA VARIÁVEL DO AMBIENTE DA INSTÂNCIA
+#
+#  Existe como FUNÇÃO porque a versão anterior repetia o mesmo `grep -oP`
+#  em cada ponto de leitura — e um deles saiu com a barra invertida do `\K`
+#  comida pelo shell, virando `^CHAT_BASE=K.*`. O padrão passou a procurar
+#  a letra K, nunca casou, e o relatório acusou "CHAT_BASE não está no
+#  ambiente" numa instalação onde ele estava.
+#
+#  Um relatório que acusa o que está certo é pior que um que não confere:
+#  manda a pessoa procurar defeito onde não há.
+#
+#  Também tolera o que um humano escreve: `export VAR=`, espaço antes do
+#  nome, aspas em volta do valor e o `\r` de quem editou no Windows.
+# ==========================================================================
+valor_de() {
+  [ -r "$AMBIENTE_ARQ" ] || return 1
+  sed -n "s/^[[:space:]]*\(export[[:space:]]\+\)\?$1=//p" "$AMBIENTE_ARQ" 2>/dev/null \
+    | tail -1 | tr -d '\r' | sed 's/^"\(.*\)"$/\1/; s/^'"'"'\(.*\)'"'"'$/\1/'
+}
+
+PORTA_INST="$(valor_de PORT)"; PORTA_INST="${PORTA_INST:-5197}"
 
 # ==========================================================================
 #  DOIS ALVOS, e eles não se substituem
@@ -265,11 +286,29 @@ fi
 # ==========================================================================
 secao "O endereço do convite"
 
-BASE_CONF="$(grep -oP '^CHAT_BASE=K.*' "$AMBIENTE_ARQ" 2>/dev/null || echo '')"
-VIDEO_CONF="$(grep -oP '^CHAT_VIDEO=K.*' "$AMBIENTE_ARQ" 2>/dev/null || echo '')"
+BASE_CONF="$(valor_de CHAT_BASE)"
+VIDEO_CONF="$(valor_de CHAT_VIDEO)"
 
-if [ -z "$BASE_CONF" ]; then
-  amarelo "CHAT_BASE não está no ambiente — o link de reunião sairá com 127.0.0.1"
+# ==========================================================================
+#  TRÊS CAUSAS DIFERENTES, TRÊS MENSAGENS DIFERENTES.
+#
+#  "Não está no ambiente" cobria, na versão anterior, o arquivo inexistente, o
+#  arquivo sem permissão de leitura e a variável realmente ausente. São
+#  problemas distintos, com soluções distintas — e a mensagem única mandava
+#  procurar no lugar errado nos dois primeiros casos.
+#
+#  O caso da PERMISSÃO é o mais traiçoeiro: o arquivo é 640 root:deploy, então
+#  rodar este script como outro usuário faz TODA leitura voltar vazia, e o
+#  relatório acusa uma instalação correta de estar pela metade.
+# ==========================================================================
+if [ ! -f "$AMBIENTE_ARQ" ]; then
+  amarelo "não achei $AMBIENTE_ARQ — esta instância foi instalada?"
+elif [ ! -r "$AMBIENTE_ARQ" ]; then
+  vermelho "não consigo LER $AMBIENTE_ARQ (sou $(id -un))"
+  echo "        o arquivo é 640 root:deploy — rode com sudo, ou como deploy"
+elif [ -z "$BASE_CONF" ]; then
+  amarelo "CHAT_BASE ausente em $AMBIENTE_ARQ — o link de reunião sairá com 127.0.0.1"
+  echo "        confira o nome: $(grep -c '^[[:space:]]*CHAT_' "$AMBIENTE_ARQ" 2>/dev/null) variáveis CHAT_* no arquivo"
 else
   case "$BASE_CONF" in
     *127.0.0.1*|*localhost*)

@@ -166,6 +166,38 @@ DEPOIS="$(grep '^CHAT_DADOS_CHAVE=' "$AMB")"
                          || vermelho "A CHAVE MUDOU — isso apagaria o histórico"
 
 # ==========================================================================
+# ==========================================================================
+secao "6. o verificar.sh sabe LER o ambiente que o deploy escreveu"
+# ==========================================================================
+# Uma instalação CORRETA acusada de estar pela metade custa mais que uma
+# checagem ausente: manda a pessoa procurar defeito onde não há. Foi o que
+# aconteceu com o padrão `^CHAT_BASE=K.*` — a barra invertida do \K comida
+# pelo shell fez o padrão procurar a letra K, nunca casar, e o relatório
+# acusar CHAT_BASE ausente numa instância onde ele estava configurado.
+#
+# A função é EXTRAÍDA do verificar.sh de verdade, e não copiada para cá: uma
+# cópia divergiria do original exatamente no dia em que isso importasse.
+AMB_TESTE="$RAIZ/etc/lachat-bemestar.env"
+{
+  echo "  CHAT_VIDEO=1"
+  echo "export CHAT_TURN_SEGREDO=zzqa"
+  echo "CHAT_STUN=\"stun:chat.exemplo:3478\""
+  printf "CHAT_COM_CR=https://x.com\r\n"
+} >> "$AMB_TESTE"
+
+eval "$(sed -n '/^valor_de() {/,/^}/p' "$AQUI/verificar.sh")"
+AMBIENTE_ARQ="$AMB_TESTE"
+
+[ "$(valor_de CHAT_BASE)" = "https://bemestarclinic.com" ] \
+  && verde "lê o CHAT_BASE que o deploy gravou" \
+  || vermelho "NÃO lê CHAT_BASE — o relatório acusaria uma instalação correta"
+[ "$(valor_de PORT)" = "6185" ] && verde "e a porta" || vermelho "não lê a porta"
+[ "$(valor_de CHAT_VIDEO)" = "1" ] && verde "com espaço antes do nome" || vermelho "engasga com espaço antes"
+[ "$(valor_de CHAT_TURN_SEGREDO)" = "zzqa" ] && verde "com export na frente" || vermelho "engasga com export"
+[ "$(valor_de CHAT_STUN)" = "stun:chat.exemplo:3478" ] && verde "tirando as aspas" || vermelho "deixa as aspas no valor"
+[ "$(valor_de CHAT_COM_CR)" = "https://x.com" ] && verde "tolerando fim de linha do Windows" || vermelho "engasga com CRLF"
+[ -z "$(valor_de NAO_EXISTE)" ] && verde "e devolve vazio para o que não existe" || vermelho "inventa valor"
+
 rm -rf "$RAIZ"
 echo ""
 echo "  ─────────────────────────────────────────────"

@@ -5,6 +5,47 @@ recurso, 3ª para correção. Nenhuma casa para no 9.
 
 ---
 
+## 0.13.1 — 23/08/2026 · o relatório acusava uma instalação correta
+
+O `verificar.sh` dizia **"CHAT_BASE não está no ambiente"** em instâncias onde
+ele estava configurado. A causa: no bloco acrescentado na 0.12.0, a barra
+invertida do `\K` foi comida pelo shell na hora de escrever o arquivo, e o
+padrão virou `^CHAT_BASE=K.*` — procurando a letra K.
+
+**Um relatório que acusa o que está certo é pior que um que não confere**: manda
+a pessoa procurar defeito onde não há. O mesmo valia para `CHAT_VIDEO`, que
+sempre voltava vazio e fazia o relatório dizer "vídeo desligado nesta instância"
+mesmo com o vídeo ligado.
+
+### A leitura do ambiente virou uma função só
+
+Havia um `grep -oP` repetido em cada ponto de leitura — e foi assim que um deles
+saiu diferente dos outros. Agora é `valor_de`, e ela tolera o que uma pessoa
+escreve de verdade num `.env`: `export VAR=`, espaço antes do nome, aspas em
+volta do valor e o `\r` de quem editou no Windows.
+
+### Três causas, três mensagens
+
+"Não está no ambiente" cobria o arquivo **inexistente**, o arquivo **sem
+permissão de leitura** e a variável **realmente ausente**. São problemas
+distintos com soluções distintas.
+
+O da permissão é o mais traiçoeiro: o `/etc/lachat-<cliente>.env` é 640
+`root:deploy`, então rodar o `verificar.sh` como outro usuário faz **toda**
+leitura voltar vazia — e o relatório acusa uma instalação correta de estar pela
+metade. Agora ele diz qual arquivo tentou ler e com que usuário.
+
+### Duas travas
+
+* **No ensaio do deploy**: sete casos que extraem a `valor_de` do
+  `verificar.sh` de verdade — não uma cópia, que divergiria do original
+  exatamente no dia em que importasse — e a exercitam contra o `.env` que o
+  `deploy.sh` acabou de escrever. O ensaio foi de 19 para **26**.
+* **No portão do CI**: um lint para a classe inteira do defeito, que recusa
+  qualquer `grep -oP` com `=K` sem a barra invertida.
+
+---
+
 ## 0.13.0 — 23/08/2026 · o relay de vídeo tem instalador
 
 `criar-relay.sh` — roda **uma vez por servidor** e deixa o coturn pronto:
