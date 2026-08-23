@@ -506,11 +506,24 @@
           endereco: e?.address || "",
           porta: e?.port || 0,
         };
-        aoErro(Object.assign(new Error(
-          cod === 401 || cod === 403 ? "O servidor de relay recusou a credencial."
-          : cod === 701 ? "Não foi possível falar com o servidor de relay."
-          : "Erro de negociação (" + cod + ")."
-        ), { codigoIce: cod, registro }));
+        /* ==================================================================
+           REGISTRA, MAS NÃO AVISA.
+
+           `onicecandidateerror` dispara por SERVIDOR e por tentativa. Numa
+           lista com STUN e TURN, UDP e TCP, é normal que alguma entrada falhe
+           enquanto outra funciona e a chamada conecta perfeitamente.
+
+           A primeira versão punha esse erro na tela na hora. O resultado foi
+           uma frase alarmante — "não foi possível falar com o servidor de
+           relay" — durante uma reunião numa instalação onde o relay estava
+           PERFEITO: TCP e UDP chegando, credencial aceita, alocação concedida.
+           Custou horas de investigação num lugar onde não havia defeito.
+
+           Aviso na tela é para FALHA, não para tentativa frustrada. Quem
+           decide isso é o estado da conexão, mais abaixo.
+           ================================================================== */
+        aoErro(Object.assign(new Error("candidato recusado (" + cod + ")"),
+          { codigoIce: cod, registro, silencioso: true }));
       };
 
       pc.oniceconnectionstatechange = () => {
@@ -519,6 +532,11 @@
            primeiro merece um restart de ICE. */
         if (pc.iceConnectionState === "failed") {
           try { pc.restartIce(); } catch { }
+          /* AQUI a conexão falhou de verdade — não é uma tentativa entre
+             outras. É o único momento em que vale interromper a reunião de
+             alguém com uma mensagem. */
+          aoErro(Object.assign(new Error("A conexão com esta pessoa falhou."),
+            { falhaDeConexao: true, com: id }));
         }
         aoMudar();
       };
@@ -879,7 +897,7 @@
           if (window.CHAT_DEBUG) console.warn("webrtc:", e?.message || e);
           /* Erro de ICE com diagnóstico vai para a TELA. O resto continua no
              console: ruído de negociação não interessa a quem está reunido. */
-          if (e?.codigoIce) {
+          if (e?.silencioso || e?.codigoIce) {
             /* O registro fica no componente, para quem for diagnosticar:
                  document.querySelector("la-chat").video.errosIce          */
             const v = this.video;
@@ -890,10 +908,23 @@
             /* A URL entra na frase: sem ela, "não falei com o relay" manda
                investigar o relay mesmo quando quem falhou foi outro endereço
                da lista — um STUN, por exemplo. */
-            const onde = e.registro?.url ? " (" + e.registro.url + ")" : "";
-            this.avisoDeVideo(e.message + onde);
+            if (!e.silencioso) {
+              const onde = e.registro?.url ? " (" + e.registro.url + ")" : "";
+              this.avisoDeVideo(e.message + onde);
+              clearTimeout(this._avisoIce);
+              this._avisoIce = setTimeout(() => this.avisoDeVideo(""), 20000);
+            }
+          }
+
+          /* A FALHA DE CONEXÃO — esta sim vai para a tela, e traz junto o
+             resumo do que foi tentado, que é o que permite diagnosticar sem
+             abrir o console. */
+          if (e?.falhaDeConexao) {
+            const tentados = (this.video?.errosIce || [])
+              .map((r) => r.codigo + " em " + (r.url || "?")).slice(0, 3).join("; ");
+            this.avisoDeVideo(e.message + (tentados ? " Tentativas: " + tentados : ""));
             clearTimeout(this._avisoIce);
-            this._avisoIce = setTimeout(() => this.avisoDeVideo(""), 20000);
+            this._avisoIce = setTimeout(() => this.avisoDeVideo(""), 25000);
           }
         },
       });

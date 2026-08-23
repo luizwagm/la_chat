@@ -5,6 +5,30 @@ recurso, 3ª para correção. Nenhuma casa para no 9.
 
 ---
 
+## 0.15.2 — 23/08/2026 · o aviso que alarmava sem motivo
+
+A frase **"Não foi possível falar com o servidor de relay"** apareceu durante uma
+reunião numa instalação onde o relay estava **perfeito**. Provado de fora, da
+máquina de quem reclamava: TCP chega, UDP chega, o coturn desafia com o realm
+certo e **concede a alocação** — por UDP e por TCP.
+
+O defeito era do aviso. `onicecandidateerror` dispara **por servidor e por
+tentativa**: numa lista com STUN e TURN, UDP e TCP, é normal que uma entrada
+falhe enquanto outra funciona e a chamada conecta. Pôr isso na tela na hora
+transformou ruído de negociação em alarme — e custou horas de investigação num
+lugar onde não havia defeito.
+
+**Aviso na tela é para FALHA, não para tentativa frustrada.** Agora o erro de
+candidato é apenas registrado (`video.errosIce`), e quem fala com o usuário é o
+estado da conexão: só quando ele vira `failed` aparece uma mensagem — e ela traz
+o resumo do que foi tentado, para diagnosticar sem abrir o console.
+
+A lição vale além daqui: um alarme que dispara durante o funcionamento normal
+não é excesso de zelo. Ele gasta o tempo de quem confia nele, e ensina a ignorar
+o painel.
+
+---
+
 ## 0.15.1 — 23/08/2026 · o erro de ICE diz QUAL servidor falhou
 
 A frase "Não foi possível falar com o servidor de relay" apareceu numa
