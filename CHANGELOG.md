@@ -5,6 +5,44 @@ recurso, 3ª para correção. Nenhuma casa para no 9.
 
 ---
 
+## 0.13.4 — 23/08/2026 · duas checagens que erravam
+
+Ambas encontradas por um relatório de verificação rodado num servidor de
+verdade — e ambas do mesmo tipo: **conferiam o mecanismo, não a propriedade.**
+
+### O segredo do TURN era dado por bom só por estar preenchido
+
+O chat assina a credencial com `CHAT_TURN_SEGREDO`; o coturn refaz a conta com o
+`static-auth-secret` dele. Diferentes, **toda alocação é recusada** — e o sintoma
+na tela é idêntico ao de não haver TURN nenhum: todo mundo preso em
+"conectando…".
+
+A checagem aprovou uma instalação onde o valor era o **texto de exemplo copiado
+do passo a passo**. Conferir a existência de um segredo não é conferir o segredo.
+
+Agora ela compara os dois lados de verdade, reconhece texto de exemplo
+(`cole`, `aqui`, `exemplo`, `seu_`, `<`, `>`) e, quando diferem, imprime o
+comando que corrige. Entraram junto as travas de rede do relay:
+`no-loopback-peers` e a contagem de `denied-peer-ip` — sem elas, um convite de
+reunião alcança a rede interna do servidor.
+
+### O WebSocket era julgado pelo `map`, não pelo cabeçalho
+
+A checagem exigia um `map` chamado `connection_upgrade`. Essa é **uma** forma de
+fazer o WebSocket atravessar o nginx, e é a nossa — mas um site que já servia
+WebSocket antes do chat costuma ter `Connection "upgrade"` escrito à mão na
+`location`, e funciona igual.
+
+O resultado era **acusar de quebrado um servidor onde o tempo real estava
+funcionando**. Num relatório de verificação, um erro falso gasta o mesmo tempo
+que um erro verdadeiro — e ensina a ignorar o relatório.
+
+Agora ela confere o que importa: o cabeçalho `Upgrade` sendo repassado. A prova
+definitiva continua vindo de fora, mais adiante: o `/ws` responder 401 significa
+que o aperto de mão atravessou o nginx e foi recusado pelo CHAT.
+
+---
+
 ## 0.13.3 — 23/08/2026 · o relay órfão
 
 O `verificar.sh` passou a notar o caso que custou uma investigação de rede: um

@@ -27,6 +27,7 @@ if [ -z "$INSTANCIA" ]; then
   exit 1
 fi
 AMBIENTE_ARQ="${AMBIENTE_ARQ:-/etc/lachat-$INSTANCIA.env}"
+ETC_TURN="${ETC_TURN:-/etc/turnserver.conf}"
 SERVICO="lachat@$INSTANCIA"
 # ==========================================================================
 #  LER UMA VARIÁVEL DO AMBIENTE DA INSTÂNCIA
@@ -198,10 +199,30 @@ if command -v nginx >/dev/null 2>&1; then
   # e que não está sendo incluído.
   CONF="$(nginx -T 2>/dev/null || true)"
 
-  if echo "$CONF" | grep -q 'conexao_upgrade\|connection_upgrade'; then
-    verde "o map de Upgrade está carregado"
+  # ======================================================================
+  #  A PROPRIEDADE, E NÃO O MECANISMO
+  #
+  #  A versão anterior exigia um `map` chamado `connection_upgrade`. Isso é UMA
+  #  forma de fazer o WebSocket atravessar o nginx, e é a nossa — mas não é a
+  #  única: um site que já servia WebSocket antes do chat costuma ter
+  #  `Connection "upgrade"` escrito à mão na `location`, e funciona igual.
+  #
+  #  O resultado era acusar de quebrado um servidor onde o tempo real estava
+  #  funcionando — e num relatório de verificação, um erro falso gasta o mesmo
+  #  tempo que um erro verdadeiro. Pior: ensina a ignorar o relatório.
+  #
+  #  O que importa é o cabeçalho `Upgrade` chegar ao chat. A conferência
+  #  DEFINITIVA vem mais adiante, de fora: o `/ws` responder 401 prova que o
+  #  aperto de mão atravessou o nginx e foi recusado pelo CHAT.
+  # ======================================================================
+  if echo "$CONF" | grep -q 'proxy_set_header[[:space:]]\+Upgrade'; then
+    if echo "$CONF" | grep -q 'conexao_upgrade\|connection_upgrade'; then
+      verde "o WebSocket atravessa o nginx (pelo map de Upgrade)"
+    else
+      verde "o WebSocket atravessa o nginx (Connection definido na location)"
+    fi
   else
-    vermelho "o map de Upgrade NÃO está carregado"
+    vermelho "o nginx NÃO repassa o cabeçalho Upgrade"
     echo "        cp nginx/lachat-upgrade.conf /etc/nginx/conf.d/ && nginx -s reload"
     echo "        SEM isto o chat carrega e autentica, mas NUNCA recebe mensagem"
     echo "        em tempo real — e nada aparece quebrado."
@@ -345,9 +366,48 @@ elif [ -n "$TURN_CONF" ]; then
   verde "vídeo ligado, com TURN configurado"
   [ "$COTURN_NO_AR" = "1" ] && verde "e há um relay escutando na 3478" \
     || amarelo "mas NADA escuta na 3478 desta máquina — o relay está fora do ar?"
-  if [ -z "$(valor_de CHAT_TURN_SEGREDO)" ]; then
+  # ======================================================================
+  #  O SEGREDO PRECISA BATER, e "preenchido" não é bater.
+  #
+  #  O chat assina a credencial com `CHAT_TURN_SEGREDO`; o coturn refaz a conta
+  #  com o `static-auth-secret` dele. Diferentes, TODA alocação é recusada — e
+  #  o sintoma na tela é idêntico ao de não haver TURN nenhum: todo mundo preso
+  #  em "conectando…".
+  #
+  #  A versão anterior só conferia se a variável estava preenchida, e aprovou
+  #  uma instalação onde o valor era o TEXTO DE EXEMPLO copiado de um passo a
+  #  passo. Conferir a existência de um segredo não é conferir o segredo.
+  # ======================================================================
+  SEGREDO_CHAT="$(valor_de CHAT_TURN_SEGREDO)"
+  SEGREDO_TURN="$(sed -n 's/^[[:space:]]*static-auth-secret=//p' "$ETC_TURN" 2>/dev/null | tail -1 | tr -d '\r')"
+
+  if [ -z "$SEGREDO_CHAT" ]; then
     vermelho "CHAT_TURN sem CHAT_TURN_SEGREDO — o coturn vai RECUSAR as credenciais"
     echo "        os dois têm de existir, e o segredo tem de bater com o static-auth-secret"
+  elif printf '%s' "$SEGREDO_CHAT" | grep -qiE 'cole|aqui|exemplo|seu_|<|>|troque|mesmo_valor'; then
+    vermelho "CHAT_TURN_SEGREDO parece um TEXTO DE EXEMPLO, não um segredo"
+    echo "        valor: $SEGREDO_CHAT"
+    echo "        o coturn vai recusar tudo, e a tela dirá apenas \"conectando…\""
+  elif [ -z "$SEGREDO_TURN" ]; then
+    amarelo "não consegui ler o static-auth-secret de $ETC_TURN para comparar"
+    echo "        (sem permissão, ou o coturn está noutra máquina)"
+  elif [ "$SEGREDO_CHAT" = "$SEGREDO_TURN" ]; then
+    verde "e o segredo BATE com o do coturn"
+  else
+    vermelho "CHAT_TURN_SEGREDO NÃO bate com o static-auth-secret do coturn"
+    echo "        toda credencial será recusada — o sintoma é \"conectando…\" eterno"
+    echo "        sudo sed -i \"s|^CHAT_TURN_SEGREDO=.*|CHAT_TURN_SEGREDO=\$(sed -n 's/^static-auth-secret=//p' $ETC_TURN | tail -1)|\" $AMBIENTE_ARQ"
+  fi
+
+  # As travas de rede do relay. Sem elas, quem tem um convite de reunião
+  # alcança a rede interna deste servidor — ver docs/PARECER-SEGURANCA.md (A1).
+  if [ -r "$ETC_TURN" ]; then
+    grep -q '^no-loopback-peers' "$ETC_TURN" \
+      && verde "o relay recusa destino no loopback" \
+      || vermelho "o coturn SEM no-loopback-peers — um convite vira túnel para a rede interna"
+    NEG="$(grep -c '^denied-peer-ip' "$ETC_TURN" 2>/dev/null || echo 0)"
+    [ "$NEG" -ge 8 ] && verde "$NEG faixas privadas negadas no relay" \
+                     || vermelho "só $NEG faixas privadas negadas (esperava 8+)"
   fi
 elif [ "$COTURN_NO_AR" = "1" ]; then
   vermelho "HÁ UM COTURN NO AR nesta máquina, e esta instância não o conhece"
