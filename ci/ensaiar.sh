@@ -96,6 +96,20 @@ AMB="$RAIZ/etc/lachat-bemestar.env"
 grep -q "^PORT=6185$" "$AMB" 2>/dev/null && verde "porta 6185" || vermelho "porta errada"
 grep -q "^CHAT_ORIGENS=https://bemestarclinic.com$" "$AMB" 2>/dev/null \
   && verde "origem do cliente" || vermelho "origem não gravada"
+
+# O ENDEREÇO DO CONVITE. Sem CHAT_BASE o link de reunião sai apontando para
+# 127.0.0.1 — e o defeito só aparece na mão de quem RECEBE o convite, que é
+# a pessoa mais distante de quem poderia diagnosticá-lo.
+grep -q "^CHAT_BASE=https://bemestarclinic.com$" "$AMB" 2>/dev/null \
+  && verde "CHAT_BASE público — o link de reunião abre fora do servidor" \
+  || vermelho "CHAT_BASE não gravado: o convite sairia com 127.0.0.1"
+
+# O vídeo nasce DESLIGADO, com as instruções ao lado. Ligar sem TURN entrega
+# um recurso que falha justamente em rede corporativa, que é onde o cliente
+# vai testar.
+grep -q "^# CHAT_VIDEO=1$" "$AMB" 2>/dev/null \
+  && verde "vídeo desligado, com as instruções de como ligar" \
+  || vermelho "o bloco de vídeo não foi escrito no ambiente"
 grep -q "^CHAT_SQLITE=$RAIZ/var/lib/lachat/bemestar/chat.db$" "$AMB" 2>/dev/null \
   && verde "banco FORA da árvore do código" || vermelho "caminho do banco errado"
 for chave in CHAT_SEGREDO_PASSE CHAT_SEGREDO_BUSCA CHAT_DADOS_CHAVE; do

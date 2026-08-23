@@ -5,6 +5,416 @@ recurso, 3ª para correção. Nenhuma casa para no 9.
 
 ---
 
+## 0.12.1 — 23/08/2026 · a documentação que mentia, e o aviso que faltava
+
+`docs/VIDEO.md` listava **"sala com link para gente de fora"** entre o que o
+sistema NÃO faz — e ela existe desde a 0.10.0. Documentação que contradiz o
+código é pior que documentação faltando: manda a pessoa procurar noutro lugar
+uma coisa que já está pronta.
+
+Corrigido, e a seção do relay passou a dizer que a reunião por link já o força
+sozinha desde a 0.12.0. Entrou também a nota sobre o **raio de alcance do
+`static-auth-secret`**: um coturn serve todas as instâncias, então o segredo do
+relay é do servidor e não do cliente. Vazando o env de um cliente, vaza o relay
+de todos — mas nenhuma conversa nem arquivo, porque `CHAT_DADOS_CHAVE` continua
+sendo uma por instância.
+
+**O serviço passou a avisar ao subir** quando o vídeo está ligado e o TURN não
+está configurado. Ele sobe assim mesmo — uma instalação em rede local, para
+testar, é legítima —, mas ninguém deve descobrir isso pelo cliente reclamando
+que "às vezes a chamada não conecta".
+
+---
+
+## 0.12.0 — 23/08/2026 · o que o parecer de segurança mandou fazer
+
+Três achados do `docs/PARECER-SEGURANCA.md` fechados, e o prazo da reunião
+passou a valer para os dois lados.
+
+### O tempo acabou para todo mundo, não só para o convidado
+
+O convidado sempre foi julgado pelo **relógio**: `podeEntrar` confere
+`tempo().acabou`. O anfitrião era julgado pelo **estado**, que só vira
+`encerrada` quando a faxina roda — até 20 segundos depois.
+
+Nessa janela havia duas verdades sobre a mesma sala. Quem criou a reunião
+reabria uma cujo prazo tinha vencido, enquanto os convidados batiam na porta
+recebendo "o tempo desta reunião terminou". **O prazo é do relógio; a faxina
+apenas o registra.**
+
+Encerrada a reunião, ela não volta por porta nenhuma — nem reabrindo a sala,
+nem entrando direto na chamada, nem pelo link. São 12 casos novos, e eles
+viajam no tempo mexendo em `encerra_em` para provar em segundos o que levaria
+meia hora.
+
+### Reabrir uma sala VIVA deixou de quebrá-la em silêncio
+
+`UPDATE … WHERE estado = 'aberta'` recusava, sem dizer nada, a reabertura de
+uma sala já ativa: a aplicação criava uma chamada nova e a sala continuava
+apontando para a **morta**. O anfitrião entrava numa reunião que a sala não
+conhecia, e todo convidado que chegasse pelo link ia parar na chamada velha —
+vendo "aguarde o anfitrião" para sempre, com o anfitrião a postos do outro lado.
+
+Os dois `COALESCE` continuam garantindo o que importa: **reabrir não adia a
+hora de acabar**. É o que faz "dura 30 minutos" ser afirmação sobre o tempo, e
+não sobre o número de aberturas.
+
+### A3 · Os anexos passaram a ser cifrados em disco
+
+O banco era cifrado e o arquivo não — uma assimetria que ninguém espera: quem
+levasse um backup lia o exame, o contrato e a foto, e não lia as conversas.
+
+Formato novo, binário: `LAC1` + versão + IV + dados + tag, 33 bytes de
+sobrecarga. **O selo no começo é o que torna isto seguro para quem já tem
+anexos no disco** — arquivo sem selo é conteúdo antigo e sai como está. Sem
+essa marca, ligar a cifra tornaria ilegível todo anexo já enviado, e o backup
+não ajudaria, porque o backup também está em claro.
+
+O download continua por fluxo. A tag do GCM mora no fim do arquivo, então a
+leitura busca os 16 bytes finais **antes** de começar a entregar: bytes não
+autenticados no navegador seriam abrir mão justamente do que o GCM oferece.
+Arquivo adulterado no disco interrompe o download em vez de ser entregue.
+
+`tamanho` e `hash` continuam sendo os do conteúdo em claro — trocá-los faria o
+`Content-Length` mentir e a conferência de integridade acusar corrupção em
+todo anexo.
+
+### A2 · Reunião por link vai pelo relay
+
+Na malha direta, quem recebe um convite descobre de onde o funcionário está
+falando — casa, escritório, celular — e vice-versa. **É a única coisa que um
+estranho leva embora sem pedir.**
+
+`CHAT_VIDEO_SO_RELAY` continua valendo para tudo, mas a decisão passou a ser
+também por chamada: toda reunião nascida de um link usa `iceTransportPolicy:
+relay`. E a decisão é tomada na **abertura**, não quando o primeiro convidado
+chega — se só um lado estivesse em relay, o outro continuaria anunciando os
+próprios candidatos e o endereço vazaria assim mesmo.
+
+Sem TURN configurado, **não** se pede relay: seria chamada impossível, não
+chamada privada — o navegador descarta todo candidato que não seja de relay e
+não sobra nenhum. Falharia em silêncio, com cara de problema de rede.
+
+### Na tela
+
+Uma sala encerrada ou revogada oferecia **"Abrir sala"** e **"Revogar"**. Os
+botões levavam a uma recusa do servidor, que é o pior tipo de botão: o que
+promete e o sistema desmente. Agora são três estados, não dois — e numa sala
+morta não sobra ação nenhuma, nem copiar: link encerrado copiado é link
+encerrado **enviado**.
+
+### Números
+
+597 testes (eram 565). A suíte de unidade passou a ser assíncrona — continua
+sem subir servidor nenhum; assíncrono ali é leitura de disco.
+
+---
+
+## 0.11.0 — 23/08/2026 · a reunião em janela própria
+
+A gaveta do chat tem 380 px. Para conduzir uma reunião — ver rosto, notar
+quem quer falar — isso é pouco. Agora o topo da reunião tem dois botões:
+
+* **⧉ Abrir em outra janela** — a reunião vai para uma janela flutuante,
+  redimensionável, que se arrasta para o segundo monitor e fica acima das
+  outras. Volta com um clique, ou fechando a janela.
+* **⛶ Tela cheia** — funciona em qualquer navegador, inclusive no celular.
+
+### Por que NÃO foi `window.open`
+
+O caminho óbvio seria abrir uma página nova com a reunião dentro. Ele está
+errado por um motivo que não aparece até a terceira pessoa entrar: **na malha
+WebRTC cada participante é identificado pelo ID do usuário**. A mesma pessoa
+em duas janelas vira dois pares com o mesmo id, e os outros passam a receber
+duas ofertas da mesma pessoa e a negociar com um par que é o próprio.
+
+Contornar exigiria desmontar a chamada aqui e remontar lá — uma entrega com
+buraco: se o bloqueador de pop-up recusasse a janela **depois** de já termos
+saído, o anfitrião perderia a reunião que estava conduzindo.
+
+### O que foi feito
+
+`documentPictureInPicture` dá uma janela de verdade **e** permite mudar os
+nós do DOM de lugar. O painel da reunião muda de janela levando consigo os
+mesmos `<video>`, as mesmas `RTCPeerConnection` e o mesmo socket. Nada é
+remontado, nada é renegociado, ninguém entra duas vezes.
+
+Verificado no navegador: um `<video>` tocando uma `MediaStream` atravessa a
+mudança de documento mantendo **o mesmo objeto de stream**, a trilha `live` e
+o tempo correndo.
+
+Na janela nova o painel entra num Shadow Root próprio. Isso resolve de graça o
+que custaria uma tarde: as regras são escritas com `:host` e classes curtas
+(`.grade`, `.quadro`), e fora de um shadow root não casariam nada — ou
+casariam demais. Dentro de um shadow root novo, `:host` passa a ser o palco e
+o CSS vale sem uma linha reescrita.
+
+### As garantias
+
+* **Nada é desfeito antes de a janela existir.** Recusa do navegador deixa a
+  reunião inteira onde estava. Há teste da ordem, e ele acusa se alguém
+  inverter.
+* **Um caminho de volta só.** Fechar pelo X e clicar em "voltar" terminam na
+  mesma função — não podem divergir com o tempo.
+* **A aba de origem não fica vazia.** No lugar da reunião aparece "A reunião
+  está em outra janela", com o botão de trazer de volta. Sem isso, quem
+  perdesse a janela de vista acharia que a reunião caiu.
+* **Acabar a reunião fecha a janela.** Não sobra janela flutuante com reunião
+  morta dentro.
+* **Fora do Chrome e do Edge o botão não aparece** — em vez de aparecer e
+  fazer outra coisa. Tela cheia continua para todos.
+
+### Também
+
+Os dois invólucros de `desmontarChamada` viraram um. Espalhados por seções
+diferentes do arquivo, faziam quem lesse o primeiro concluir que já tinha
+visto tudo que acontece ao encerrar — e foi o próprio teste que tropeçou
+nisso primeiro.
+
+---
+
+## 0.10.0 — 23/08/2026 · reunião por link, para quem não tem conta
+
+O anfitrião cria um link, define quanto tempo a reunião dura e manda para
+quem quiser. Quem recebe digita um nome e entra — **sem conta, sem senha,
+sem cadastro**. O link é `/call/<11 caracteres>`.
+
+### O que existe
+
+* **Aba "Reuniões"** no chat: criar link, copiar, abrir a sala, ver quem
+  entrou, remover alguém e revogar o link. Só aparece com `CHAT_VIDEO=1`.
+* **Página do convidado** em `/call/<codigo>`: prévia da câmera, campo de
+  nome, sala de espera enquanto o anfitrião não abre, e tela de encerramento
+  que diz **por que** acabou (saiu, removido, revogado, tempo esgotado).
+* **Tempo com hora marcada**: aviso nos últimos 5 minutos e encerramento pelo
+  **servidor** — relógio de navegador não estende reunião.
+* **Duração** de 5 minutos a 8 horas; o link vale 24 h por padrão.
+
+### As decisões que importam
+
+**O convidado tem sessão PRÓPRIA** (`seguranca/convidado.js`), cookie `cvd`,
+separada da sessão de funcionário. E o roteador tem um **portão de lista
+branca**: uma rota nova nasce PROIBIDA para convidado. A pergunta que o
+sistema faz deixou de ser "há sessão?" e passou a ser "quem é, e para onde
+essa identidade vale?".
+
+**O código do link não é guardado em claro.** No banco fica o SHA-256 (para
+achar) e uma cópia cifrada (para o anfitrião reler). Quem lê o banco não
+descobre link nenhum.
+
+**Inexistente, revogado e expirado dizem a MESMA frase.** Distinguir
+confirmaria ao curioso que ele acertou um código — é assim que tentativa e
+erro vira mapa. Com 58^11 (~2^64) combinações e freio de 20 tentativas por
+minuto por IP, adivinhar é inviável.
+
+**O convidado não existe para a empresa.** Não aparece no diretório, nem na
+busca, não pode ser posto em grupo, não alcança conversas, mensagens, perfil
+nem administração. São 83 testes, e mais da metade prova exatamente isso.
+
+**A página do convidado não interpola nada.** O servidor entrega um HTML
+constante; o código da sala vem do endereço. XSS ali é impossível por
+construção, e a CSP daquela página não tem `unsafe-inline` para script.
+
+**Revogar e remover matam o cookie na hora**, não na próxima recarga — e
+derrubam o socket junto.
+
+### Corrigido no caminho
+
+* **O link ignorava o prefixo do chat.** Em qualquer instalação com o chat sob
+  `/chat`, o convite apontava para um endereço que ninguém serve. O teste
+  aprovava porque conferia só o fim do link; agora ele **abre** o link.
+  `/call/<codigo>` curto passou a redirecionar para dentro do prefixo, no
+  servidor e no conector.
+* **O convidado aparecia na busca de pessoas.** O filtro tinha sido aplicado
+  em duas das três consultas.
+* **"Origem não autorizada" na própria página.** A página do convidado é
+  servida por este serviço, e a defesa contra CSWSH — escrita para barrar site
+  de terceiros — barrava a nossa própria página. A origem do próprio chat
+  entrou na lista, e há teste dos dois lados.
+* **O chat ficava SEM VÍDEO, em silêncio.** `CSS_SALA` foi declarado depois da
+  varredura que chama `prepararVideo()` durante a avaliação do módulo:
+  ReferenceError de zona morta temporal, dentro de um `catch { }` vazio. Tela
+  perfeita, console limpo, suíte verde. O `catch` vazio virou `console.error`.
+* **O anfitrião não via o próprio relógio.** Título da sala e contagem
+  regressiva estavam presos ao modo do convidado; quem marcou a hora via
+  "Chamada" e um relógio contando para cima.
+* **Aba selecionada por texto do botão.** Funcionava com duas abas e por
+  acaso; com a terceira, virou `data-aba`.
+
+---
+
+## 0.9.1 — 16/08/2026 · três defeitos da reunião, achados usando
+
+### O áudio morria junto com a câmera
+
+Desligar o vídeo derrubava o som da pessoa. A causa não estava no áudio em
+lugar nenhum — `alternarCamera` só mexe nas trilhas de vídeo. Era a **pintura
+da tela**: o elemento `<video>` só era criado quando havia imagem, e é ele que
+toca o áudio do outro lado. Câmera desligada, elemento fora do DOM, voz sumida.
+
+Agora o `<video>` fica **sempre**, e o retrato de quem está sem câmera é uma
+camada por cima. Vale também para a tira do modo destaque: quem está lá
+continua no DOM, e continua sendo ouvido.
+
+### O JSON aparecendo na barra lateral
+
+A prévia da conversa mostrava o corpo cru da mensagem de sistema:
+
+```
+{"ev":"chamada","id":"01M0JY1…
+```
+
+O corpo é JSON de propósito — a frase depende de quem lê ("ninguém atendeu" x
+"chamada perdida"), e montá-la no servidor a congelaria no banco, cifrada, para
+sempre. O que faltava era o outro lado do contrato: o servidor agora manda o
+evento **estruturado** (`previa.evento`) e devolve texto vazio, e a tela monta a
+frase sabendo quem está lendo.
+
+`textoDaPrevia` virou ponto de extensão no cliente. Sem alguém que saiba
+traduzir aquele evento, a linha fica **em branco** — nunca com o JSON.
+
+### O vídeo pequeno, e sem como ampliar
+
+A grade usava `align-content: center` com linhas do tamanho do conteúdo: numa
+reunião de duas pessoas sobravam faixas escuras em cima e embaixo e o rosto
+ficava do tamanho de um selo. Agora as linhas dividem a altura disponível
+(`grid-auto-rows: 1fr`) — o mesmo vídeo passou de um quadrado pequeno para
+364×628 numa janela de 720px.
+
+E **clicar num vídeo o amplia**; clicar de novo volta. O escolhido ocupa a área
+toda e os demais viram uma tira de 84px embaixo. Acessível por teclado
+(`role="button"`, Enter e Espaço), com `aria-pressed` dizendo o estado.
+
+Em tela alta e estreita, duas pessoas passam a ficar empilhadas em vez de lado
+a lado — dois retratos espremidos numa tela de celular não ajudam ninguém.
+
+---
+
+## 0.9.0 — 16/08/2026 · reunião por vídeo
+
+Chamada de vídeo e reunião de equipe, dentro da conversa. **Desligada por
+padrão** (`CHAT_VIDEO=1` liga).
+
+### A decisão: malha P2P, e não SFU
+
+Cada participante abre uma conexão WebRTC com cada outro. **A mídia nunca passa
+pelo servidor** — ele é a telefonista que repassa envelopes fechados.
+
+Duas consequências, e as duas foram escolhidas:
+
+- **o vídeo é ponta a ponta de verdade.** DTLS-SRTP é obrigatório no WebRTC;
+  não há modo inseguro e o servidor não decifraria nem querendo. Para uma
+  clínica, isso é argumento, não detalhe;
+- **teto de 6 pessoas.** Em malha, cada um SOBE (N−1) fluxos: seis pessoas são
+  ~7,5 Mbps de subida por cabeça, o que já dói em 4G. O teto recusa **na porta**
+  em vez de deixar a sétima pessoa derrubar o áudio de todos.
+
+A alternativa — SFU (mediasoup, LiveKit) — escala para 50, e custa compilação
+nativa no servidor, ~150 Mbps de repasse por reunião de 10, e a mídia passando
+a existir na sua máquina. Foi descartada **para o tamanho real destas equipes**,
+com o caminho de volta preparado: trocar a topologia não toca em domínio, banco
+nem autorização. Ver [docs/VIDEO.md](docs/VIDEO.md).
+
+### O que entrou
+
+- **Chamada direta e reunião de grupo**, iniciadas de dentro da conversa.
+- **Toque, atender, recusar** — com som gerado (sem arquivo) e aviso visual que
+  funciona mesmo quando o navegador bloqueia o áudio.
+- **Câmera, microfone e compartilhamento de tela**, com o estado de cada pessoa
+  gravado: quem entra no meio já vê quem está mudo.
+- **Indicador de quem está falando**, por analisador de áudio — sem ele, uma
+  reunião de seis é seis retratos parados e ninguém sabe de quem é a voz.
+- **A reunião vira uma linha no histórico** da conversa, com duração; chamada
+  não atendida aparece como perdida, com "Ligar de volta".
+- **Quem chega depois vê "Reunião em andamento · Entrar"** ao abrir a conversa.
+- **Entrar de novo é idempotente** — recarregar a aba não duplica ninguém.
+
+### Segurança
+
+- **A autorização não é nova.** Quem entra numa chamada é quem é membro da
+  conversa — a mesma `exigirMembro` que já protege mensagens e anexos, já
+  dentro do SQL e já com suíte em cima. Sem sala com link, sem convite externo,
+  sem sala de espera: cada um seria um lugar novo para errar.
+- **O `de` de cada sinal é carimbado pelo servidor**, a partir da sessão do
+  socket. O campo que vem do cliente é descartado — senão qualquer participante
+  injetaria uma oferta de mídia em nome de outro. Testado.
+- **Sinal validado por forma**: tipo de lista fechada e teto de tamanho, antes
+  de qualquer repasse.
+- **Credenciais de TURN de vida curta** (HMAC do padrão `use-auth-secret`, 2 h).
+  Usuário e senha fixos vazam pelo DevTools de qualquer funcionário e
+  transformam o seu servidor em relay de graça para estranhos.
+- **Exposição de IP documentada**, com `CHAT_VIDEO_SO_RELAY=1` para quem
+  precisar escondê-la.
+- **Sem gravação, sem transcrição.** Exigiriam consentimento, retenção e
+  política de acesso — e, em malha, um servidor recebendo a mídia só para
+  gravar, que é metade de um SFU.
+
+### O código do vídeo só chega ao navegador quando o vídeo está ligado
+
+`la-chat-video.js` é um arquivo separado que o servidor **concatena na entrega**
+— e só concatena com `CHAT_VIDEO=1`. Numa instalação sem reunião, nada de WebRTC
+é baixado ou avaliado: o recurso não existe, em vez de existir escondido atrás
+de um `if`. O ETag cobre as duas partes, senão uma correção no vídeo não
+invalidaria o cache.
+
+Isso também cumpre o que a arquitetura já prometia (§36): componentes em
+arquivos separados, concatenados na entrega, sem passo de build.
+
+### Defeitos encontrados durante a construção
+
+- **O teto do sinal era igual ao teto do quadro WebSocket** (64 KB). Um sinal
+  grande demais estourava o `maxPayload` do `ws`, que **fecha a conexão**: em
+  vez de uma recusa educada, a pessoa perdia o socket inteiro e caía do chat.
+  Baixado para 32 KB. *Uma trava não pode ser mais destrutiva que o abuso que
+  ela impede.*
+- **A migração 002 nunca aplicou o índice do PostgreSQL.** A chave do bloco
+  específico era `postgres`, e o `migrar.js` procura `pg`. No PostgreSQL, a
+  trava contra pessoa duplicada simplesmente não existia — em silêncio.
+  Corrigida.
+- **A suíte herdava o `.env` da máquina.** Com `CHAT_VIDEO=1` no `.env` de
+  desenvolvimento, o teste "com o vídeo DESLIGADO" subia um servidor com vídeo
+  ligado e acusava o código. Uma suíte que mede o ambiente não é uma suíte:
+  agora `subirChat` fixa explicitamente o que precisa controlar.
+
+### Testes
+
+**469** (eram 400). A suíte nova, `testes/video.cjs`, tem **65** casos e é onde
+a segurança do vídeo mora — a mídia não passa pelo servidor, então o que dá
+para atacar é a sinalização: falsificação de origem do sinal, injeção em
+reunião alheia, sinal fora de forma, entrada sem convite, teto da malha,
+chamada fantasma e queda de socket.
+
+---
+
+## 0.8.2 — 19/08/2026 · cada login apagava o retrato que o elenco acabara de pôr
+
+O Kenósis ganhou foto no cadastro de usuário do sistema, o elenco sincronizou
+o avatar… e ele sumia no login seguinte. Causa: o `/entrar` regrava o cadastro
+com os dados do PASSE — e o passe vem da sessão do hospedeiro, que não carrega
+foto. `avatar: ""` a cada login, por cima do que o elenco tinha gravado. No
+BemEstar o defeito sempre existiu e ficou invisível: o reenvio periódico repõe
+a foto em até 5 minutos.
+
+Contrato novo no `garantir`: **avatar `undefined` mantém o que está; string
+(mesmo vazia) vale**. O elenco continua sendo a verdade inteira — vazio ali
+limpa de fato —, e o `/entrar` passa a tratar passe sem foto como "não sei",
+apagando o campo antes de gravar. No SQL, `avatar = COALESCE(?, avatar)` com
+`null` quando é para manter.
+
+## 0.8.1 — 19/08/2026 · a unit lia o env duas vezes — e a segunda como o usuário errado
+
+No systemd, quem lê o `EnvironmentFile=` é o PRÓPRIO systemd, como root; o
+processo já nasce com o ambiente completo. Mas o `ExecStart` passa o mesmo
+caminho ao `instancia.js`, que EXIGIA lê-lo de novo — agora como o usuário do
+serviço, contra um arquivo `600 root:root`. Resultado: `EACCES` com o
+ambiente inteiro já na mão.
+
+Agora o lançador tenta ler o arquivo e, se não conseguir, confere se as
+chaves obrigatórias JÁ ESTÃO no ambiente: estando, segue (o arquivo era só o
+mensageiro); faltando, para com recado dizendo os dois caminhos. A conferência
+de instância completa continua exatamente igual — o que mudou é de quem ela
+aceita a resposta.
+
 ## 0.8.0 — 19/08/2026 · uma instância por cliente, do mesmo código
 
 O Instituto Kenósis pediu chat com **conexão própria** — e a razão de fundo é

@@ -241,6 +241,57 @@ const CONF = {
     digitandoMs: num(process.env.CHAT_DIGITANDO_MS, 6_000),
   },
 
+  /* ==========================================================================
+     VÍDEO (reunião)
+
+     Topologia: MALHA. Cada pessoa manda o próprio vídeo para cada uma das
+     outras, direto, cifrado por DTLS-SRTP — a mídia NUNCA passa por este
+     servidor. Ver docs/VIDEO.md para a decisão e para quando ela deixa de
+     servir.
+     ========================================================================== */
+  video: {
+    /* Desligado por padrão. Uma instalação existente não deve ganhar botão de
+       câmera num deploy sem que alguém tenha decidido isso — e sem TURN
+       configurado o recurso funcionaria pela metade, que é pior que não ter. */
+    ativo: bool(process.env.CHAT_VIDEO, false),
+
+    /* Seis é o limite honesto da malha (ver dominio/chamadas.js). Configurável
+       PARA BAIXO — uma instalação com internet ruim pode querer 4. Subir daqui
+       não melhora nada: derruba o áudio de todo mundo em vez de recusar a
+       sétima pessoa na porta. */
+    teto: Math.min(6, num(process.env.CHAT_VIDEO_TETO, 6)),
+
+    /* Quanto tempo o telefone toca. 45 s é o que o celular faz. */
+    tocandoMs: num(process.env.CHAT_VIDEO_TOCANDO_MS, 45_000),
+
+    /* STUN: só responde "o teu IP público é este". Não vê mídia, não custa
+       banda. O padrão usa o servidor público do Google porque ele é gratuito e
+       não recebe conteúdo nenhum — mas quem quiser autonomia total aponta para
+       o próprio coturn, que também faz STUN. */
+    stun: lista(process.env.CHAT_STUN, ["stun:stun.l.google.com:19302"]),
+
+    /* TURN: o relay para quando a conexão direta não fecha. Sem ele, de 15% a
+       20% das chamadas falham — concentradas em rede corporativa. */
+    turn: lista(process.env.CHAT_TURN),
+    turnSegredo: process.env.CHAT_TURN_SEGREDO || "",
+    turnTtl: num(process.env.CHAT_TURN_TTL, 2 * 3600),
+
+    /* Força TODA a mídia pelo TURN. Custa banda e latência; em troca, os
+       participantes deixam de ver o IP uns dos outros. É decisão de quem
+       instala — ver a nota de exposição de IP em docs/VIDEO.md. */
+    soRelay: bool(process.env.CHAT_VIDEO_SO_RELAY, false),
+
+    /* Compartilhar tela. Separado do vídeo porque há cliente que quer reunião
+       com câmera e NÃO quer que a tela do sistema de gestão possa ser
+       compartilhada por engano. */
+    tela: bool(process.env.CHAT_VIDEO_TELA, true),
+
+    /* Chamadas iniciadas por hora, por pessoa. Tocar o telefone dos colegas é
+       barato para quem chama e caro para quem recebe — é assédio de baixo
+       custo se não tiver freio. */
+    porHora: num(process.env.CHAT_VIDEO_POR_HORA, 30),
+  },
+
   /* ---------------------------------------------------------- notificações */
   notificacoes: {
     ativas: bool(process.env.CHAT_NOTIFICACOES, true),

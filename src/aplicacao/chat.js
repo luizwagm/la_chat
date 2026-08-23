@@ -185,7 +185,13 @@ function criarServico({ repos, conf, barramento, limites, armazenamento, sessoes
       }
 
       await repos.usuarios.garantirContexto(conf1.contexto, conf1.contexto);
-      const usuario = await repos.usuarios.garantir(conf1.contexto, conf1.usuario);
+      /* O passe vem da SESSÃO do hospedeiro, que em geral não sabe a foto da
+         pessoa — vazio aqui é "não sei", nunca "apague". Sem esta linha, cada
+         login apagava o avatar que o elenco tinha acabado de sincronizar.
+         Quem limpa foto é o ELENCO, que é o cadastro inteiro. */
+      const dadosDoPasse = { ...conf1.usuario };
+      if (!dadosDoPasse.avatar) delete dadosDoPasse.avatar;
+      const usuario = await repos.usuarios.garantir(conf1.contexto, dadosDoPasse);
 
       if (usuario.situacao !== "ativa")
         throw erros.semPermissao("Seu acesso ao chat está desativado.");

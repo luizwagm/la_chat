@@ -29,6 +29,8 @@ const SUITES = [
   { nome: "fusão", arquivo: "fusao.cjs" },
   { nome: "integração", arquivo: "integracao.cjs" },
   { nome: "tempo real", arquivo: "realtime.cjs" },
+  { nome: "vídeo", arquivo: "video.cjs" },
+  { nome: "salas", arquivo: "salas.cjs" },
   { nome: "segurança", arquivo: "seguranca.cjs" },
   { nome: "e2e", arquivo: "e2e.cjs" },
 ];

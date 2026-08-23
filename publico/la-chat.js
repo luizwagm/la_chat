@@ -145,7 +145,11 @@
   * { transition: none !important; }
 }
 
-.painel { display: flex; background: var(--fundo); color: var(--tinta); overflow: hidden; }
+/* position:relative para as camadas que se sobrepõem AO PAINEL (perfil,
+   reunião, toque) se posicionarem contra ele, e não contra a janela inteira.
+   Sem isto, no modo drawer a sobreposição escurecia a tela toda em vez do
+   painel — e a reunião cobria o site do hospedeiro por baixo. */
+.painel { position: relative; display: flex; background: var(--fundo); color: var(--tinta); overflow: hidden; }
 
 /* ==========================================================================
    BARRA LATERAL
@@ -823,11 +827,24 @@
         tBusca = setTimeout(() => this.buscar(campoBusca.value), 250);
       });
 
+      /* Cada aba carrega o PRÓPRIO nome em `data-aba`. A versão anterior
+         descobria a aba selecionada comparando os quatro primeiros
+         caracteres do texto do botão — o que funcionava com duas abas e por
+         acaso: bastava uma terceira começando pelas mesmas letras, ou a
+         tradução de um rótulo, para a aba certa deixar de acender. */
+      const fazerAba = (chave, rotulo) => {
+        const b = criar("button", {
+          classe: "aba", role: "tab", texto: rotulo,
+          "aria-selected": String(chave === "conversas"),
+          onclick: () => this.trocarAba(chave),
+        });
+        b.dataset.aba = chave;
+        return b;
+      };
+
       const abas = criar("div", { classe: "abas", role: "tablist" }, [
-        criar("button", { classe: "aba", role: "tab", "aria-selected": "true", texto: "Conversas",
-          onclick: () => this.trocarAba("conversas") }),
-        criar("button", { classe: "aba", role: "tab", "aria-selected": "false", texto: "Pessoas",
-          onclick: () => this.trocarAba("pessoas") }),
+        fazerAba("conversas", "Conversas"),
+        fazerAba("pessoas", "Pessoas"),
       ]);
 
       const lista = criar("div", { classe: "lista", role: "list", "aria-label": "Conversas" });
@@ -964,6 +981,18 @@
        ==================================================================== */
     async iniciar() {
       if (this.iniciando) return;
+
+      /* ================================================================
+         MODO SALA — a reunião por link.
+
+         Aqui NÃO há passe a pedir nem `/eu` a consultar: a identidade do
+         convidado nasceu no `POST /call/<codigo>/entrar` e a página é quem
+         a entrega, por `entrarNaSala()`. Sem esta saída, abrir a sala
+         dispararia uma busca de passe que o hospedeiro não serve, e o
+         convidado veria "O site não confirmou quem é você." — uma frase
+         verdadeira para o funcionário e sem sentido nenhum para ele.
+         ================================================================ */
+      if (this.modo === "sala") return;
 
       /* Já conectado: abrir a gaveta não refaz sessão nem socket. Só atualiza
          o que envelhece enquanto ela está fechada. Sem esta saída, cada
@@ -1320,7 +1349,7 @@
     async trocarAba(aba) {
       this.estado.aba = aba;
       for (const b of this.el.abas.children)
-        b.setAttribute("aria-selected", String(b.textContent.toLowerCase().startsWith(aba.slice(0, 4))));
+        b.setAttribute("aria-selected", String(b.dataset.aba === aba));
       this.pintarLista();
       /* SEMPRE recarrega ao entrar na aba — não só quando a lista está vazia.
          Com a condição antiga, quem abrisse "Pessoas" uma vez ficava com aquele
@@ -1664,7 +1693,7 @@
         c.tipo === "grupo" ? { nome } : c.outro,
         c.tipo === "grupo" ? null : (c.outro?.status || "offline")));
 
-      const previa = c.previa?.apagada ? "mensagem apagada" : (c.previa?.texto || "");
+      const previa = this.textoDaPrevia(c);
       const txt = criar("div", { classe: "txt" }, [
         criar("div", { classe: "nome" }, [
           criar("b", { texto: nome }),
@@ -1681,6 +1710,32 @@
         }));
 
       return item;
+    }
+
+    /* ======================================================================
+       O TEXTO DA LINHA NA BARRA LATERAL
+
+       É um método próprio, e não uma expressão dentro de `linhaConversa`, para
+       poder ser ESTENDIDO. Mensagem de sistema (uma chamada encerrada, por
+       exemplo) tem corpo em JSON — e a frase depende de quem lê. Quem sabe
+       montá-la é o módulo que criou o evento, não este arquivo.
+
+       Sem o ponto de extensão, a barra lateral mostrava o JSON cru:
+           {"ev":"chamada","id":"01M0JY1…
+       ====================================================================== */
+    textoDaPrevia(c) {
+      const p = c.previa;
+      if (!p) return "";
+      if (p.apagada) return "mensagem apagada";
+
+      if (p.evento) {
+        const frase = this.fraseDoEvento?.(p.evento, c);
+        /* Sem quem saiba traduzir aquele evento, a linha fica VAZIA — nunca
+           com o JSON. Um campo em branco é discreto; o JSON é um defeito
+           visível para o cliente. */
+        return frase || "";
+      }
+      return p.texto || "";
     }
 
     linhaPessoa(p) {

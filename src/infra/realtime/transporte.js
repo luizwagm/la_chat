@@ -58,6 +58,20 @@ const TIPOS = Object.freeze({
   DIGITANDO_ENVIO: "digit",
   LIDA_ENVIO: "lida",
   SINCRONIZAR: "sinc",
+
+  /* ------------------------------------------------------------- reunião
+     Nomes curtos como o resto: um socket de reunião troca muitos candidatos
+     ICE por segundo enquanto a conexão se estabelece. */
+  CHAMADA_TOCANDO: "cham.toca",
+  CHAMADA_ENTROU: "cham.entrou",
+  CHAMADA_SAIU: "cham.saiu",
+  CHAMADA_ENCERRADA: "cham.fim",
+  CHAMADA_DISPOSITIVOS: "cham.disp",
+  CHAMADA_SINAL: "cham.sinal",
+
+  /* sala por link */
+  SALA_AVISO: "sala.aviso",
+  SALA_ENCERRADA: "sala.fim",
 });
 
 module.exports = { TIPOS };

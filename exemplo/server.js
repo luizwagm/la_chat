@@ -29,8 +29,40 @@ require("../config.js");
 
 const conectorChat = require("../conector/lachat.js");
 
-const PORTA = Number(process.env.PORTA_EXEMPLO) || 5199;
-const URL_CHAT = process.env.CHAT_URL || `http://127.0.0.1:${process.env.PORT || 5197}`;
+const PORTA = Number(process.env.PORTA_EXEMPLO) || Number(process.env.PORT) || 5199;
+
+/* ==========================================================================
+   A PORTA DO CHAT NÃO SE DERIVA DE `PORT`.
+
+   `PORT` é a porta DESTE processo — o site. A primeira versão fazia
+   `process.env.PORT || 5197`, o que funciona quando se roda `npm run exemplo`
+   à mão (não há `PORT` no ambiente) e QUEBRA quando alguém sobe o exemplo por
+   um lançador que define `PORT` — aí o site passa a repassar `/chat/*` para
+   ele mesmo.
+
+   O sintoma: `/chat/saude` devolve vazio, o cliente não carrega e nada no log
+   diz o motivo. Aconteceu ao subir pelo `.claude/launch.json`.
+   ========================================================================== */
+const URL_CHAT = (process.env.CHAT_URL || "http://127.0.0.1:5197").replace(/\/+$/, "");
+
+/* E a trava para não acontecer de novo em silêncio: repassar para si mesmo é
+   sempre engano, e é melhor recusar a subir do que servir um site que não
+   funciona sem explicar por quê. */
+try {
+  const alvo = new URL(URL_CHAT);
+  if (Number(alvo.port) === PORTA) {
+    console.error(`
+  ✖ O exemplo está apontando o chat para ELE MESMO (porta ${PORTA}).
+
+    O site e o chat são DOIS processos, em portas diferentes:
+        chat   -> ${5197}   (npm start)
+        site   -> ${PORTA}   (npm run exemplo)
+
+    Defina CHAT_URL se o chat não estiver em 127.0.0.1:5197.
+`);
+    process.exit(1);
+  }
+} catch { /* URL malformada: o repasse falha adiante com mensagem própria */ }
 
 /* ==========================================================================
    O "CADASTRO" DO HOSPEDEIRO

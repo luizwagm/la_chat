@@ -32,6 +32,8 @@ const { abrir, agora } = require("./banco.js");
 const MIGRACOES = [
   require("./migracoes/001-inicial.js"),
   require("./migracoes/002-identidade.js"),
+  require("./migracoes/003-chamadas.js"),
+  require("./migracoes/004-salas.js"),
 ];
 
 async function garantirRegistro(Q) {

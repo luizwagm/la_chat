@@ -256,6 +256,40 @@ else
 fi
 
 # ==========================================================================
+#  O ENDEREÇO DO CONVITE
+#
+#  Com a reunião por link ligada, CHAT_BASE deixa de ser detalhe: é o endereço
+#  que vai DENTRO do convite. Apontando para o loopback, o anfitrião manda ao
+#  cliente um link que só abre de dentro do servidor — e ninguém descobre isso
+#  daqui, porque daqui ele funciona.
+# ==========================================================================
+secao "O endereço do convite"
+
+BASE_CONF="$(grep -oP '^CHAT_BASE=K.*' "$AMBIENTE_ARQ" 2>/dev/null || echo '')"
+VIDEO_CONF="$(grep -oP '^CHAT_VIDEO=K.*' "$AMBIENTE_ARQ" 2>/dev/null || echo '')"
+
+if [ -z "$BASE_CONF" ]; then
+  amarelo "CHAT_BASE não está no ambiente — o link de reunião sairá com 127.0.0.1"
+else
+  case "$BASE_CONF" in
+    *127.0.0.1*|*localhost*)
+      vermelho "CHAT_BASE aponta para o loopback ($BASE_CONF) — o convite não abre fora do servidor" ;;
+    https://*) verde "CHAT_BASE público: $BASE_CONF" ;;
+    *) amarelo "CHAT_BASE sem https ($BASE_CONF) — o navegador recusa câmera fora de origem segura" ;;
+  esac
+fi
+
+if [ "$VIDEO_CONF" = "1" ]; then
+  if grep -q '^CHAT_TURN=' "$AMBIENTE_ARQ" 2>/dev/null; then
+    verde "vídeo ligado, com TURN configurado"
+  else
+    amarelo "vídeo ligado SEM TURN — de 15% a 20% das chamadas vão falhar"
+  fi
+else
+  verde "vídeo desligado nesta instância (reunião por link indisponível)"
+fi
+
+# ==========================================================================
 echo ""
 echo "  ─────────────────────────────────────────────"
 printf "  %d ok · %d avisos · %d erros\n\n" "$ok" "$aviso" "$erro"

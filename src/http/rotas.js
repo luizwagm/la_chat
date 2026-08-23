@@ -15,6 +15,70 @@
 const { responder, responderErro, lerCorpo, lerJson } = require("./responder.js");
 const { erros } = require("../dominio/erros.js");
 const { ehUlid } = require("../dominio/ids.js");
+const fs = require("node:fs");
+const path = require("node:path");
+
+/* ==========================================================================
+   A PÁGINA DO CONVIDADO
+
+   O ÚNICO HTML que este serviço entrega. Ela é servida SEM NADA INTERPOLADO:
+   o código da sala não entra no HTML, a página o lê do próprio endereço.
+   Isso não é economia de esforço — é o que torna XSS impossível aqui por
+   construção, em vez de por escapamento correto. Um dia alguém acrescenta um
+   campo "titulo" na interpolação e esquece o escape; sem interpolação
+   nenhuma, esse dia não chega.
+
+   O cabeçalho `Content-Security-Policy` é mais apertado que o do resto do
+   serviço porque esta página é a superfície aberta: sem `unsafe-inline`, sem
+   origem externa, e `connect-src` limitado a si mesma. O WebRTC precisa de
+   `webrtc-src`? Não — mídia peer-to-peer não passa por CSP de conexão; o que
+   passa é o STUN/TURN, e esse é o navegador quem faz, fora do documento.
+   ========================================================================== */
+const CSP_DA_SALA = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",   /* o componente usa <style> no shadow */
+  "img-src 'self' data: blob:",
+  "media-src 'self' blob:",
+  "connect-src 'self' ws: wss:",
+  "font-src 'self'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'none'",
+  "frame-ancestors 'none'",
+].join("; ");
+
+let htmlDaSala = null;
+
+function paginaDaSala(res, codigo, conf) {
+  /* Código fora de forma não chega a ler arquivo nenhum. */
+  if (typeof codigo !== "string" || !/^[1-9A-HJ-NP-Za-km-z]{11}$/.test(codigo))
+    return responder(res, 404, { erro: "Link inválido ou expirado." });
+
+  if (!conf.video?.ativo)
+    return responder(res, 404, { erro: "Não encontrado." });
+
+  try {
+    if (!htmlDaSala || process.env.NODE_ENV !== "production")
+      htmlDaSala = fs.readFileSync(path.join(conf.caminhos.publico, "sala.html"));
+  } catch {
+    return responder(res, 500, { erro: "Página indisponível." });
+  }
+
+  res.writeHead(200, {
+    "Content-Type": "text/html; charset=utf-8",
+    "Content-Length": htmlDaSala.length,
+    "Content-Security-Policy": CSP_DA_SALA,
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    /* `noindex` importa: um link de reunião no índice de busca é um link de
+       reunião entregue a quem nunca o recebeu. */
+    "X-Robots-Tag": "noindex, nofollow, noarchive",
+    "Referrer-Policy": "no-referrer",
+    "Cache-Control": "no-store",
+  });
+  return res.end(htmlDaSala);
+}
 
 /* ==========================================================================
    AS ÚNICAS ROTAS SEM SESSÃO.
@@ -33,7 +97,45 @@ const PUBLICAS = new Set([
   "POST /elenco",
 ]);
 
-function criarRotas({ servico, sessoes, conf, porteiro, saude }) {
+/* ==========================================================================
+   O PORTÃO DO CONVIDADO — lista branca, e o padrão é RECUSAR
+
+   O convidado tem uma sessão própria (`seguranca/convidado.js`), e as rotas do
+   chat não a consultam. Mas o roteador consulta as duas — e sem esta função a
+   pergunta voltaria a ser "há sessão?", que é exatamente o erro que a sessão
+   separada existe para evitar.
+
+   Aqui a pergunta é "quem é, e para onde essa identidade vale?". Uma rota nova
+   nasce PROIBIDA para convidado; liberá-la é um ato deliberado, nesta lista,
+   revisável de uma olhada.
+
+   O que ele pode, e nada além:
+     · entrar, sair, mudo/câmera e credenciais de UMA chamada;
+     · pedir o bilhete do WebSocket (o transporte confere o resto);
+     · sair da sala.
+
+   O que ele NÃO pode, e é o ponto: conversas, mensagens, busca, pessoas,
+   perfil, anexos, elenco, administração e criação de salas.
+   ========================================================================== */
+function convidadoPode(metodo, p) {
+  /* /chamadas/:id/<acao> — o `:id` é conferido adiante; aqui só a AÇÃO. */
+  if (p[0] === "chamadas" && p.length === 3)
+    return ["entrar", "sair", "dispositivos", "credenciais"].includes(p[2]);
+
+  /* O bilhete do socket. O transporte confere origem, unicidade e teto; e o
+     que o convidado consegue fazer pelo socket é limitado pelas mesmas regras
+     de chamada (ele só sinaliza para quem está DENTRO da chamada dele). */
+  if (metodo === "POST" && p[0] === "bilhete" && p.length === 1) return true;
+
+  /* As rotas da própria sala. `/call/:codigo` e `/call/:codigo/entrar` são
+     públicas de qualquer forma — não exigem sessão nenhuma. */
+  if (p[0] === "call") return true;
+
+  return false;
+}
+
+
+function criarRotas({ servico, chamadas, salas, sessoes, convidados, conf, porteiro, saude }) {
   /* Casa `/conversas/:id/mensagens` sem regex por rota. Devolve os pedaços do
      caminho; quem trata confere o formato de cada id com `ehUlid`. */
   const pedacos = (caminho) => caminho.split("/").filter(Boolean);
@@ -102,11 +204,96 @@ function criarRotas({ servico, sessoes, conf, porteiro, saude }) {
     }
 
     /* ==========================================================================
+       A SALA POR LINK — as ÚNICAS rotas do sistema que respondem sem credencial
+
+       `/call/:codigo` e `/call/:codigo/entrar` são alcançáveis por qualquer um
+       que tenha o link. É a superfície mais exposta que este projeto tem, e por
+       isso ela é curta, com freio próprio por IP (em aplicacao/salas.js) e com
+       respostas deliberadamente vagas: inexistente, revogada e expirada
+       devolvem a MESMA frase, para tentativa e erro não virar mapa.
+       ========================================================================== */
+    if (p[0] === "call" && p.length >= 2) {
+      const codigo = p[1];
+
+      /* A página do convidado. Sem sessão, sem cookie, sem nada.
+
+         `responder` direto, e não o atalho `ok`: este bloco roda ANTES da
+         conferência de sessão, e o atalho só existe depois dela. Usá-lo aqui
+         estouraria em ReferenceError na única rota que qualquer estranho
+         alcança — que é o pior lugar possível para um 500. */
+      /* A PÁGINA e a API não dividem endereço.
+
+         `/call/<codigo>` é o que a pessoa cola no navegador: devolve HTML.
+         `/call/<codigo>/info` é o que a página consulta: devolve JSON.
+
+         A alternativa — o mesmo endereço servindo os dois conforme o
+         cabeçalho `Accept` — parece elegante e é frágil: um proxy que
+         normaliza `Accept`, um cache que ignora `Vary`, ou um leitor de
+         link de mensageiro faz a página virar JSON na cara do convidado. */
+      if (metodo === "GET" && p.length === 2) {
+        /* A BARRA NO FIM MUDA O SIGNIFICADO DE `../`.
+
+           `/chat/call/abc` e `/chat/call/abc/` casam o mesmo padrão aqui —
+           `filter(Boolean)` come o pedaço vazio — mas o navegador resolve os
+           `<script src="../…">` da página de forma DIFERENTE nos dois: no
+           segundo, `../cliente.js` vira `/chat/call/cliente.js` e a página
+           carrega sem componente nenhum. Tela em branco, sem erro visível.
+
+           Um endereço canônico, então, e um redirecionamento para ele. */
+        if (caminho.endsWith("/")) {
+          res.writeHead(301, {
+            Location: conf.prefixo + "/call/" + encodeURIComponent(codigo),
+            "Cache-Control": "no-store",
+          });
+          return res.end();
+        }
+        return paginaDaSala(res, codigo, conf);
+      }
+
+      if (metodo === "GET" && p[2] === "info" && p.length === 3)
+        return responder(res, 200, await salas.info(codigo, { ip: req.ipReal }), cors);
+
+      if (metodo === "POST" && p[2] === "entrar" && p.length === 3) {
+        const c = await lerJson(req, 4 * 1024);
+        const r = await salas.entrar({
+          codigo,
+          nome: c.nome,
+          ip: req.ipReal,
+          agente: req.headers["user-agent"] || "",
+        });
+        /* O cookie do convidado sai AQUI, e só aqui. */
+        return responder(res, 200, {
+          eu: r.eu, sala: r.sala, chamada: r.chamada,
+        }, { ...cors, "Set-Cookie": r.cookies });
+      }
+
+      if (metodo === "POST" && p[2] === "sair" && p.length === 3) {
+        const cookies = convidados.encerrar(req);
+        return responder(res, 200, { ok: true }, { ...cors, "Set-Cookie": cookies });
+      }
+    }
+
+    /* ==========================================================================
        DAQUI PARA BAIXO, TUDO EXIGE SESSÃO
        ========================================================================== */
-    const publica = PUBLICAS.has(chave) || (metodo === "GET" && p[0] === "cliente.js");
-    const sessao = await sessoes.de(req);
+    const publica = PUBLICAS.has(chave) || (metodo === "GET" && p[0] === "cliente.js")
+      || p[0] === "call";
+
+    /* ==========================================================================
+       QUEM É — e não apenas "há sessão?"
+
+       A sessão de funcionário é tentada primeiro. Se não houver, tenta-se a de
+       CONVIDADO, que é outra coisa: vale para uma sala e nada mais.
+
+       O portão logo abaixo é o que impede a segunda de virar a primeira. Sem
+       ele, bastaria existir uma sessão para qualquer rota do chat responder — e
+       um convidado leria a lista de pessoas da empresa.
+       ========================================================================== */
+    const sessao = (await sessoes.de(req)) || convidados.de(req);
     if (!publica && !sessao) throw erros.naoAutenticado();
+
+    if (sessao?.ehConvidado && !convidadoPode(metodo, p))
+      throw erros.semPermissao("Esta ação não está disponível para convidados.");
 
     /* ==========================================================================
        CSRF EM TODA ESCRITA
@@ -122,7 +309,11 @@ function criarRotas({ servico, sessoes, conf, porteiro, saude }) {
        autenticação. Erro 500 em rota pública é indisponibilidade barata de
        provocar. */
     if (sessao && !["GET", "HEAD"].includes(metodo)) {
-      const c = sessoes.conferirCsrf(req, sessao.sessaoId);
+      /* Cada tipo de sessão confere o PRÓPRIO token: os cookies são
+         diferentes, e cruzar os dois faria o token de um valer no outro. */
+      const c = sessao.ehConvidado
+        ? convidados.conferirCsrf(req)
+        : sessoes.conferirCsrf(req, sessao.sessaoId);
       if (!c.ok) return responder(res, 403, { erro: "Sessão inválida. Recarregue a página.", codigo: "csrf" }, cors);
     }
 
@@ -195,6 +386,88 @@ function criarRotas({ servico, sessoes, conf, porteiro, saude }) {
     /* ==========================================================================
        ROTAS COM ID NO CAMINHO
        ========================================================================== */
+
+    /* ==========================================================================
+       REUNIÃO
+
+       Tudo que MUDA o estado da chamada passa por HTTP, e não pelo socket:
+       aqui já existem sessão, CSRF, limitador e tratamento de erro. Pelo
+       socket vai só o `sinal`, que é o único de alta frequência.
+
+       `:id` é sempre conferido como ULID antes de chegar ao banco, e a
+       autorização de cada uma delas é a MESMA da conversa — ver
+       aplicacao/chamadas.js.
+       ========================================================================== */
+
+    /* /conversas/:id/chamada — tem reunião rolando aqui? */
+    if (metodo === "GET" && p[0] === "conversas" && p[2] === "chamada" && p.length === 3)
+      return ok(await chamadas.daConversa(sessao, p[1]));
+
+    /* Iniciar. Se já houver uma, o serviço ENTRA nela em vez de abrir outra —
+       é o desfecho certo para dois cliques simultâneos. */
+    if (metodo === "POST" && p[0] === "conversas" && p[2] === "chamada" && p.length === 3)
+      return ok(await chamadas.iniciar(sessao, p[1]));
+
+    if (p[0] === "chamadas" && p.length >= 2) {
+      const chamadaId = p[1];
+      if (!ehUlid(chamadaId)) throw erros.naoEncontrado();
+
+      if (metodo === "POST" && p[2] === "entrar" && p.length === 3)
+        return ok(await chamadas.entrar(sessao, chamadaId));
+
+      if (metodo === "POST" && p[2] === "sair" && p.length === 3)
+        return ok(await chamadas.sair(sessao, chamadaId));
+
+      if (metodo === "POST" && p[2] === "recusar" && p.length === 3)
+        return ok(await chamadas.recusar(sessao, chamadaId));
+
+      if (metodo === "PATCH" && p[2] === "dispositivos" && p.length === 3) {
+        const c = await lerJson(req, 4 * 1024);
+        return ok(await chamadas.dispositivos(sessao, chamadaId, {
+          microfone: c.microfone, camera: c.camera, tela: c.tela,
+        }));
+      }
+
+      /* Renovar as credenciais do TURN no meio de uma reunião longa. Elas
+         valem duas horas; uma reunião que passe disso precisa de novas, ou a
+         reconexão de ICE falha justamente quando a rede está ruim. */
+      if (metodo === "GET" && p[2] === "credenciais" && p.length === 3)
+        return ok(await chamadas.credenciais(sessao, chamadaId));
+    }
+
+    /* ==========================================================================
+       SALAS — do lado de quem cria. Convidado nunca chega aqui (ver o portão).
+       ========================================================================== */
+    if (metodo === "POST" && p[0] === "salas" && p.length === 1) {
+      const c = await lerJson(req, 4 * 1024);
+      return ok(await salas.criar(sessao, {
+        titulo: c.titulo,
+        duracaoMin: c.duracaoMin,
+        validadeH: c.validadeH,
+        exigeAnfitriao: c.exigeAnfitriao,
+        maxConvidados: c.maxConvidados,
+      }));
+    }
+
+    if (metodo === "GET" && p[0] === "salas" && p.length === 1)
+      return ok({ salas: await salas.minhas(sessao) });
+
+    if (p[0] === "salas" && p.length >= 2) {
+      const salaId = p[1];
+      if (!ehUlid(salaId)) throw erros.naoEncontrado();
+
+      if (metodo === "DELETE" && p.length === 2)
+        return ok(await salas.revogar(sessao, salaId));
+
+      if (metodo === "POST" && p[2] === "abrir" && p.length === 3)
+        return ok(await salas.abrir(sessao, salaId));
+
+      if (metodo === "GET" && p[2] === "participantes" && p.length === 3)
+        return ok(await salas.participantes(sessao, salaId));
+
+      if (metodo === "POST" && p[2] === "remover" && p.length === 4)
+        return ok(await salas.expulsar(sessao, salaId, p[3]));
+    }
 
     /* /pessoas/:id */
     if (metodo === "GET" && p[0] === "pessoas" && p.length === 2)

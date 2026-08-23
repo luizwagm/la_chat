@@ -103,6 +103,22 @@ async function subirChat({ porta = 5297, origens = "http://127.0.0.1:5299", extr
        X-Forwarded-For é obedecido. É o que permite testar a defesa de
        falsificação de IP. */
     CHAT_PROXIES: "0",
+    /* ====================================================================
+       O QUE A SUÍTE NÃO PODE HERDAR DA MÁQUINA
+
+       O servidor de teste lê o `.env` do projeto como qualquer outro — e o
+       `.env` de quem desenvolve tem o que aquela pessoa estava experimentando.
+       Uma suíte que passa ou falha conforme o `.env` da máquina não é uma
+       suíte: ela mede o ambiente, não o código.
+
+       Aconteceu com `CHAT_VIDEO`: ligado no `.env` para testar reunião no
+       navegador, ele fazia o teste "com o vídeo DESLIGADO" subir um servidor
+       com vídeo LIGADO — e o teste falhava dizendo que o código estava errado.
+
+       Tudo que a suíte precisa controlar entra AQUI, explicitamente. `extra`
+       vem depois e vence, que é como cada suíte liga o que quer testar.
+       ==================================================================== */
+    CHAT_VIDEO: "0",
     ...segredos,
     ...extra,
   };

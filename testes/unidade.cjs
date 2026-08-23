@@ -26,7 +26,10 @@ const { ipDe, valido } = require("../src/infra/seguranca/ip.js");
 const { paraPostgres } = require("../src/infra/dados/banco.js");
 const cripto = require("../src/infra/seguranca/cripto.js");
 
-function rodar() {
+/* `async` porque a suíte passou a conferir coisas que só se sabem lendo o
+   disco — o anexo cifrado, por exemplo. Ela continua não subindo servidor
+   nenhum: assíncrono aqui é I/O local, não rede. */
+async function rodar() {
   const P = criarPlacar("Unidade");
 
   /* ====================================================================== */
@@ -326,6 +329,306 @@ function rodar() {
       elFaltando.length ? "NÃO EXISTEM: " + elFaltando.join(", ") : "");
   }
 
+  /* ======================================================================
+     `hidden` CONTRA `display` — a trava para a tela preta não voltar
+
+     O navegador aplica a regra `[hidden] { display: none }` na folha de estilo
+     DELE, que tem a MENOR prioridade de todas. Qualquer regra nossa que declare
+     `display` para o mesmo elemento passa por cima, e o que deveria estar
+     escondido aparece.
+
+     Aconteceu: abrir o chat mostrava uma TELA PRETA — era o painel da reunião,
+     escondido pelo atributo e visível pelo CSS, cobrindo tudo. Nada quebrava,
+     nada aparecia no console; só a tela preta.
+
+     ---------------------------------------------------------------------
+     A PRIMEIRA VERSÃO DESTE TESTE ERA VAZIA
+
+     Ela procurava a regra de correção no arquivo INTEIRO — e o comentário que
+     explica a correção também contém o texto dela. Removendo a regra de
+     verdade, o teste continuava passando por causa do próprio comentário.
+
+     Por isso agora ele olha SÓ o conteúdo dos blocos de CSS, com os comentários
+     removidos, e exige algo com forma de seletor. Um teste que não falha
+     quando o defeito volta é pior que teste nenhum.
+     ====================================================================== */
+  P.secao("cliente: `hidden` precisa vencer o `display`");
+
+  {
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const publico = path.join(__dirname, "..", "publico");
+
+    const arquivos = ["la-chat.js", "la-chat-video.js"]
+      .map((f) => { try { return fs.readFileSync(path.join(publico, f), "utf8"); } catch { return ""; } });
+    const fonte = arquivos.join("\n");
+
+    /* Só o CSS: o conteúdo dos templates `const CSS… = ` … ` `, sem comentários. */
+    const css = [...fonte.matchAll(/const\s+CSS\w*\s*=\s*`([\s\S]*?)`;/g)]
+      .map((m) => m[1].replace(/\/\*[\s\S]*?\*\//g, ""))
+      .join("\n");
+
+    P.ok(css.length > 1000, "achei o CSS do cliente", `${css.length} caracteres`);
+
+    /* Classes que nascem escondidas, e as que são escondidas depois. */
+    const comHidden = new Set();
+    for (const m of fonte.matchAll(/classe:\s*"([\w-]+)"[^}]{0,220}?hidden:/g)) comHidden.add(m[1]);
+    for (const m of fonte.matchAll(/querySelector\("\.([\w-]+)"\)[^;\n]{0,60}\.hidden\s*=/g))
+      comHidden.add(m[1]);
+
+    P.ok(comHidden.size > 0, "achei classes que usam o atributo `hidden`",
+      [...comHidden].join(", "));
+
+    const conferir = (textoCss) => {
+      const faltando = [];
+      for (const classe of comHidden) {
+        const regra = new RegExp("\\." + classe + "\\s*\\{([^}]*)\\}").exec(textoCss);
+        if (!regra) continue;
+        /* Só importa quando a própria regra declara `display` — aí ela vence o
+           `[hidden]` do navegador. Sem `display`, o atributo funciona sozinho. */
+        if (!/(^|;)\s*display\s*:/.test(regra[1])) continue;
+        /* E o remendo precisa ter FORMA DE SELETOR: `.classe[hidden]` seguido,
+           talvez depois de outros seletores, de uma chave. */
+        const remendo = new RegExp("\\." + classe + "\\[hidden\\][^{}]*\\{");
+        if (!remendo.test(textoCss)) faltando.push(classe);
+      }
+      return faltando;
+    };
+
+    P.ok(conferir(css).length === 0,
+      "toda classe com `display` que usa `hidden` tem a regra `[hidden]`",
+      conferir(css).join(", "));
+
+    /* A PROVA DE QUE O TESTE NÃO É VAZIO: tirando a regra, ele tem de acusar.
+       Sem isto, a versão anterior passou meses parecendo proteger algo. */
+    const sabotado = css.replace(/\.chamada\[hidden\][^{}]*\{[^}]*\}/, "");
+    P.ok(conferir(sabotado).includes("chamada"),
+      "e a trava ACUSA quando a regra é removida (o teste não é vazio)",
+      "removi a regra e o teste continuou passando");
+  }
+
+  /* ======================================================================
+     A REUNIÃO EM JANELA PRÓPRIA — a trava é sobre a ORDEM
+
+     Mudar a reunião de janela é seguro por um motivo só: nada é desfeito
+     antes de a janela existir. Se `requestWindow` for recusada — bloqueador,
+     política do sistema, falta de gesto do usuário — a reunião tem de
+     continuar inteira onde estava.
+
+     Inverter essa ordem seria fácil e o defeito seria raro e caríssimo: o
+     anfitrião perderia, no meio de uma reunião com gente dentro, a reunião
+     que ele estava conduzindo. Este teste existe para essa inversão não
+     passar despercebida numa revisão.
+     ====================================================================== */
+  P.secao("cliente: a janela da reunião não pode desmontar antes da hora");
+
+  {
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const fonte = fs.readFileSync(
+      path.join(__dirname, "..", "publico", "la-chat-video.js"), "utf8");
+
+    /* O corpo da função que abre a janela, sem comentários — comentário que
+       cita `desmontarChamada` não pode reprovar nem aprovar nada. */
+    const corpoDe = (nome, texto) => {
+      const i = texto.indexOf("LaChat.prototype." + nome + " = ");
+      if (i < 0) return "";
+      const fim = texto.indexOf("\n  };", i);
+      return texto.slice(i, fim < 0 ? texto.length : fim)
+        .replace(/\/\*[\s\S]*?\*\//g, "");
+    };
+
+    const abrir = corpoDe("abrirReuniaoEmJanela", fonte);
+    P.ok(abrir.length > 200, "achei a função que abre a janela", abrir.length + " caracteres");
+
+    /* A recusa acontece no `catch` do `await requestWindow`. Dali até o fim
+       do bloco não pode haver desmontagem. */
+    const conferirOrdem = (texto) => {
+      const iPede = texto.indexOf("requestWindow");
+      const iMove = texto.indexOf("raiz.appendChild(this.el.chamada)");
+      const desmonta = /desmontarChamada|sairDaChamada|malha\s*\.\s*encerrar/.test(texto);
+      return {
+        pedeAntesDeMover: iPede >= 0 && iMove > iPede,
+        naoDesmonta: !desmonta,
+      };
+    };
+
+    const r = conferirOrdem(abrir);
+    P.ok(r.pedeAntesDeMover,
+      "a janela é PEDIDA antes de o painel ser movido");
+    P.ok(r.naoDesmonta,
+      "e abrir a janela nunca desmonta a chamada — recusa deixa tudo no lugar");
+
+    /* A PROVA DE QUE O TESTE NÃO É VAZIO. */
+    const sabotado = abrir.replace("v.janela = janela;", "this.desmontarChamada();");
+    P.ok(!conferirOrdem(sabotado).naoDesmonta,
+      "e a trava ACUSA quando alguém põe uma desmontagem aí dentro",
+      "sabotei a função e o teste continuou passando");
+
+    /* O caminho de volta é UM só: fechar pelo X da janela e fechar pelo botão
+       têm de terminar no mesmo lugar, ou os dois divergem com o tempo. */
+    P.ok(/pagehide[\s\S]{0,120}recolherReuniao/.test(fonte),
+      "fechar a janela devolve a reunião para a aba (pagehide → recolher)");
+    P.ok(/fecharJanelaDaReuniao = function[\s\S]{0,300}j\.close\(\)/.test(fonte),
+      "e o botão de voltar passa pelo MESMO caminho, fechando a janela");
+
+    /* Acabar a reunião não pode deixar uma janela flutuante órfã. */
+    const desmontar = corpoDe("desmontarChamada", fonte);
+    P.ok(/j\.close\(\)/.test(desmontar),
+      "o fim da reunião fecha a janela — não sobra janela com reunião morta");
+
+    /* O botão só existe onde a API existe. Um botão que aparece e não funciona
+       é pior que botão nenhum. */
+    P.ok(/const TEM_JANELA = [\s\S]{0,120}documentPictureInPicture/.test(fonte),
+      "a existência do recurso é medida, não suposta");
+    P.ok(/if \(TEM_JANELA\) \{[\s\S]{0,400}Abrir em outra janela/.test(fonte),
+      "e o botão de nova janela só aparece onde o navegador sabe abri-la");
+  }
+
+  /* ======================================================================
+     O ANEXO É CIFRADO EM DISCO
+
+     Até a 0.11.0 o banco era cifrado e o arquivo não. A assimetria era pior
+     que a falta: quem levasse um backup lia os anexos — o exame, o contrato,
+     a foto — e não lia as conversas. Ninguém espera essa ordem.
+
+     Quatro coisas precisam ser verdade ao mesmo tempo, e é fácil conseguir
+     três: cifrar, ler de volta idêntico, NÃO quebrar o que já está no disco
+     em claro, e RECUSAR arquivo adulterado.
+     ====================================================================== */
+  P.secao("anexo cifrado em disco");
+
+  {
+    const fsn = require("node:fs");
+    const os = require("node:os");
+    const pathn = require("node:path");
+    const cryptn = require("node:crypto");
+    const arm = require(pathn.join(__dirname, "..", "src", "infra", "storage", "armazenamento.js"));
+
+    const pasta = fsn.mkdtempSync(pathn.join(os.tmpdir(), "zzqa-anexo-"));
+    const disco = arm.criar({ driver: "local", pasta });
+
+    const marcaSecreta = "ZZ QA conteudo sigiloso do exame";
+    const original = Buffer.concat([
+      Buffer.from("%PDF-1.7 " + marcaSecreta + " "),
+      cryptn.randomBytes(64 * 1024),
+    ]);
+
+    const lerTudo = (fluxo) => new Promise((ok, err) => {
+      const pedacos = [];
+      fluxo.on("data", (d) => pedacos.push(d))
+           .on("end", () => ok(Buffer.concat(pedacos)))
+           .on("error", err);
+    });
+
+    const g = await disco.gravar(original, { sufixo: "bin" });
+    const noDisco = fsn.readFileSync(pathn.join(pasta, g.caminho));
+
+    P.eq(noDisco.subarray(0, 4).toString("ascii"), "LAC1",
+      "o arquivo em disco leva o selo do formato cifrado");
+    P.ok(!noDisco.includes(Buffer.from(marcaSecreta)),
+      "e o conteúdo NÃO aparece em claro no disco");
+    P.eq(noDisco.length - g.tamanho, 33,
+      "a sobrecarga é de 33 bytes (selo, versão, IV e tag)");
+
+    /* O tamanho e o hash devolvidos são os do CONTEÚDO, não os do arquivo.
+       Trocá-los faria o Content-Length do download mentir e a conferência de
+       integridade acusar corrupção em todo anexo. */
+    P.eq(g.tamanho, original.length, "o tamanho declarado é o do conteúdo em claro");
+    P.eq(g.hash, cryptn.createHash("sha256").update(original).digest("hex"),
+      "e o hash também — é o que o download confere");
+    P.eq(await disco.tamanho(g.caminho), original.length,
+      "tamanho() desconta a sobrecarga da cifra");
+
+    P.ok((await disco.ler(g.caminho)).equals(original), "ler() devolve o original");
+    P.ok((await lerTudo(disco.fluxo(g.caminho))).equals(original),
+      "fluxo() devolve o original — a tag mora no fim e é buscada antes");
+
+    /* ------------------------------------------------------------------
+       O QUE JÁ ESTÁ NO DISCO. Sem esta compatibilidade, ligar a cifra
+       tornaria ilegível todo anexo já enviado — e o backup não ajudaria,
+       porque o backup também está em claro.
+       ------------------------------------------------------------------ */
+    const antigo = pathn.posix.join("2024", "01", "legado.bin");
+    fsn.mkdirSync(pathn.join(pasta, "2024", "01"), { recursive: true });
+    fsn.writeFileSync(pathn.join(pasta, antigo), original);
+
+    P.ok((await disco.ler(antigo)).equals(original),
+      "anexo ANTERIOR à cifra continua legível por ler()");
+    P.ok((await lerTudo(disco.fluxo(antigo))).equals(original),
+      "e por fluxo() também");
+
+    /* ------------------------------------------------------------------
+       ADULTERAÇÃO. É o que o GCM oferece além da confidencialidade, e é o
+       motivo de a tag ser buscada ANTES de o download começar: entregar
+       bytes não autenticados seria abrir mão justamente disso.
+       ------------------------------------------------------------------ */
+    const alvo = pathn.join(pasta, g.caminho);
+    const mexido = fsn.readFileSync(alvo);
+    mexido[100] ^= 0xFF;
+    fsn.writeFileSync(alvo, mexido);
+
+    let recusouLer = false;
+    try { await disco.ler(g.caminho); } catch { recusouLer = true; }
+    P.ok(recusouLer, "arquivo ADULTERADO no disco é recusado por ler()");
+
+    let recusouFluxo = false;
+    await new Promise((ok) => disco.fluxo(g.caminho)
+      .on("data", () => { })
+      .on("end", ok)
+      .on("error", () => { recusouFluxo = true; ok(); }));
+    P.ok(recusouFluxo, "e o download é interrompido em vez de entregar bytes alterados");
+
+    fsn.rmSync(pasta, { recursive: true, force: true });
+  }
+
+  /* ======================================================================
+     A POLÍTICA DE TRANSPORTE DA MÍDIA
+
+     Numa reunião por link, o IP é a única coisa que um estranho leva embora
+     sem pedir. `relay` fecha isso — e só funciona se houver relay para onde
+     mandar, o que faz do `temTurn` parte da regra, e não um detalhe.
+     ====================================================================== */
+  P.secao("relay: quem vê o IP de quem");
+
+  {
+    const path2 = require("node:path");
+    const { criarTurn } = require(path2.join(__dirname, "..", "src", "infra", "seguranca", "turn.js"));
+
+    const comTurn = criarTurn({
+      urls: ["turn:relay.exemplo:3478"], segredo: "zz-qa-segredo",
+      stun: ["stun:stun.exemplo:3478"],
+    });
+
+    P.eq(comTurn.credenciais("u1").iceTransportPolicy, "all",
+      "chamada comum entre colegas vai direto — relay ali só gastaria banda");
+    P.eq(comTurn.credenciais("u1", { aberta: true }).iceTransportPolicy, "relay",
+      "reunião por LINK vai pelo relay — ninguém vê o IP de ninguém");
+
+    const global = criarTurn({
+      urls: ["turn:relay.exemplo:3478"], segredo: "zz-qa-segredo", soRelay: true,
+    });
+    P.eq(global.credenciais("u1").iceTransportPolicy, "relay",
+      "e a chave de instalação continua valendo para tudo");
+
+    /* ==================================================================
+       SEM SERVIDOR DE RELAY, PEDIR relay NÃO É MAIS SEGURO: é impossível.
+       O navegador descarta todo candidato que não seja de relay e não sobra
+       nenhum — a chamada falha em silêncio, com cara de problema de rede.
+       ================================================================== */
+    const semTurn = criarTurn({ urls: [], segredo: "", stun: ["stun:stun.exemplo:3478"] });
+    P.eq(semTurn.credenciais("u1", { aberta: true }).iceTransportPolicy, "all",
+      "sem TURN configurado, NÃO se pede relay — seria chamada impossível");
+
+    /* A credencial é derivada por HMAC e expira sozinha: vazou, morre. */
+    const c = comTurn.credenciais("u1", { aberta: true });
+    const alvo = c.iceServers.find((s) => String(s.urls).startsWith("turn:"));
+    P.ok(comTurn.conferir(alvo.username, alvo.credential),
+      "a credencial de relay confere com a conta que o coturn faz");
+    P.ok(Number(String(alvo.username).split(":")[0]) * 1000 > Date.now(),
+      "e traz a validade embutida no próprio nome de usuário");
+  }
+
   /* ====================================================================== */
   P.secao("tradução de SQL");
 
@@ -346,8 +649,7 @@ function rodar() {
 }
 
 if (require.main === module) {
-  const ok = rodar();
-  process.exitCode = ok ? 0 : 1;
+  rodar().then((ok) => { process.exitCode = ok ? 0 : 1; });
 }
 
 module.exports = { rodar };

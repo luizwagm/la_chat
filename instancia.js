@@ -33,27 +33,41 @@ if (!arq) {
   process.exit(1);
 }
 const caminho = path.resolve(__dirname, arq);
-if (!fs.existsSync(caminho)) {
-  console.error(`✖ arquivo de ambiente não encontrado: ${caminho}`);
-  process.exit(1);
-}
-
-const texto = fs.readFileSync(caminho, "utf8");
-const definidas = new Set();
-for (const linha of texto.split(/\r?\n/)) {
-  const m = linha.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
-  if (!m || linha.trim().startsWith("#")) continue;
-  const valor = m[2].replace(/^["']|["']$/g, "");
-  process.env[m[1]] = valor;          // a instância VENCE o que já houver
-  definidas.add(m[1]);
-}
 
 /* As chaves que separam uma instância da outra. Faltando qualquer uma, esta
    instância herdaria o valor da padrão — banco compartilhado, segredo
    compartilhado — e o erro só apareceria misturando dados de dois clientes. */
 const OBRIGATORIAS = ["PORT", "CHAT_SQLITE", "CHAT_ARQUIVOS",
   "CHAT_SEGREDO_PASSE", "CHAT_SEGREDO_BUSCA", "CHAT_DADOS_CHAVE", "CHAT_ORIGENS"];
-const faltam = OBRIGATORIAS.filter((k) => !definidas.has(k));
+
+/* No systemd, quem lê o arquivo é o PRÓPRIO systemd (como root, via
+   EnvironmentFile=) — quando este processo nasce, as variáveis JÁ ESTÃO no
+   ambiente, e o arquivo pode ser ilegível para o usuário do serviço (600
+   root:root). Exigir a leitura aqui derrubava a unit com EACCES mesmo com o
+   ambiente completo. Então: se o arquivo não puder ser lido mas as chaves
+   obrigatórias já estiverem postas, segue — o arquivo era só o mensageiro. */
+let definidas = null;
+try {
+  const texto = fs.readFileSync(caminho, "utf8");
+  definidas = new Set();
+  for (const linha of texto.split(/\r?\n/)) {
+    const m = linha.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
+    if (!m || linha.trim().startsWith("#")) continue;
+    const valor = m[2].replace(/^["']|["']$/g, "");
+    process.env[m[1]] = valor;          // a instância VENCE o que já houver
+    definidas.add(m[1]);
+  }
+} catch (e) {
+  const jaPostas = OBRIGATORIAS.every((k) => process.env[k]);
+  if (!jaPostas) {
+    console.error(`✖ não consegui ler ${caminho} (${e.code || e.message}) e o ambiente não traz as chaves da instância.`);
+    console.error(`  Ou torne o arquivo legível para o usuário do serviço, ou defina no ambiente: ${OBRIGATORIAS.join(", ")}`);
+    process.exit(1);
+  }
+  console.log(`  · ambiente herdado do systemd (${path.basename(caminho)} ilegível para este usuário — ok)`);
+}
+
+const faltam = OBRIGATORIAS.filter((k) => definidas ? !definidas.has(k) : !process.env[k]);
 if (faltam.length) {
   console.error(`✖ ${path.basename(caminho)} precisa declarar: ${faltam.join(", ")}`);
   console.error("  (sem elas a instância herdaria banco/segredos da instância padrão)");

@@ -25,7 +25,9 @@ const fs = require("node:fs");
 const fsp = require("node:fs/promises");
 const path = require("node:path");
 const crypto = require("node:crypto");
+const { PassThrough } = require("node:stream");
 const { ulid } = require("../../dominio/ids.js");
+const cripto = require("../seguranca/cripto.js");
 
 function criarLocal({ pasta }) {
   fs.mkdirSync(pasta, { recursive: true });
@@ -79,8 +81,22 @@ function criarLocal({ pasta }) {
       /* Grava em temporário e renomeia. Se faltar energia no meio, fica um
          `.tmp` órfão em vez de um anexo pela metade que o banco jura estar
          inteiro. */
+      /* ====================================================================
+         CIFRADO EM DISCO.
+
+         Até a 0.11.0 o banco era cifrado e o anexo não — uma assimetria que
+         ninguém espera: quem levasse um backup lia os arquivos e não lia as
+         conversas. E o arquivo é justamente onde mora o exame, o contrato, a
+         foto.
+
+         O que se grava é `cifrarBytes`; o `tamanho` e o `hash` devolvidos
+         continuam sendo os do conteúdo EM CLARO, de propósito: eles são o que
+         o usuário vê na tela e o que o download declara. Trocá-los pelos do
+         arquivo cifrado faria o `Content-Length` mentir em 33 bytes e a
+         conferência de integridade acusar corrupção em todo download.
+         ==================================================================== */
       const tmp = alvo + ".tmp";
-      await fsp.writeFile(tmp, bytes, { mode: 0o600 });
+      await fsp.writeFile(tmp, cripto.cifrarBytes(bytes), { mode: 0o600 });
       await fsp.rename(tmp, alvo);
 
       return {
@@ -93,14 +109,72 @@ function criarLocal({ pasta }) {
     },
 
     async ler(relativo) {
-      return fsp.readFile(caminhoReal(relativo));
+      return cripto.decifrarBytes(await fsp.readFile(caminhoReal(relativo)));
     },
 
     /* Download por FLUXO. Um anexo de 10 MB lido inteiro para a memória, vezes
        vinte pessoas baixando ao mesmo tempo, são 200 MB de pico num servidor
        que hospeda vinte sites. O fluxo entrega em pedaços. */
+    /* ======================================================================
+       O FLUXO, COM A TAG QUE MORA NO FIM
+
+       Decifrar em fluxo tem um problema de ordem: o GCM só autentica quando
+       recebe a tag, e a tag está no ÚLTIMO bloco do arquivo. Ler linearmente
+       não serve — quando ela chegasse, os bytes já teriam ido para o navegador.
+
+       Então: abre o arquivo, lê os 17 bytes do começo (é nosso?), lê os 16 do
+       FIM (a tag), e só então põe o miolo para correr através do decifrador. É
+       uma busca no arquivo antes de começar, e é o que permite manter o
+       download em pedaços — vinte pessoas baixando 10 MB não podem virar
+       200 MB de pico num servidor que hospeda vinte sites.
+
+       Arquivo sem o selo é anexo anterior à cifra: sai direto, como sempre saiu.
+       ====================================================================== */
     fluxo(relativo) {
-      return fs.createReadStream(caminhoReal(relativo));
+      const alvo = caminhoReal(relativo);
+      const saida = new PassThrough();
+
+      (async () => {
+        let fd;
+        try {
+          fd = await fsp.open(alvo, "r");
+          const info = await fd.stat();
+
+          const cabecalho = Buffer.alloc(cripto.TAM_CABECALHO);
+          const { bytesRead } = await fd.read(cabecalho, 0, cabecalho.length, 0);
+          const cab = bytesRead === cabecalho.length ? cripto.lerCabecalho(cabecalho) : null;
+
+          if (!cab) {
+            await fd.close(); fd = null;
+            fs.createReadStream(alvo).on("error", (e) => saida.destroy(e)).pipe(saida);
+            return;
+          }
+
+          const tag = Buffer.alloc(cripto.TAM_TAG);
+          await fd.read(tag, 0, tag.length, info.size - cripto.TAM_TAG);
+
+          const decifrador = cripto.decifradorDeFluxo({ versao: cab.versao, iv: cab.iv, tag });
+
+          const corpo = fd.createReadStream({
+            start: cripto.TAM_CABECALHO,
+            end: info.size - cripto.TAM_TAG - 1,
+            autoClose: true,
+          });
+          fd = null;   // o fluxo passa a ser dono do descritor
+
+          corpo.on("error", (e) => saida.destroy(e));
+          /* Um erro do decifrador aqui é a TAG NÃO CONFERINDO: o arquivo foi
+             alterado no disco. Destruir o fluxo é o certo — melhor download
+             interrompido que bytes adulterados entregues como íntegros. */
+          decifrador.on("error", (e) => saida.destroy(e));
+          corpo.pipe(decifrador).pipe(saida);
+        } catch (e) {
+          try { await fd?.close(); } catch { }
+          saida.destroy(e);
+        }
+      })();
+
+      return saida;
     },
 
     async existe(relativo) {
@@ -111,8 +185,21 @@ function criarLocal({ pasta }) {
       try { await fsp.unlink(caminhoReal(relativo)); return true; } catch { return false; }
     },
 
+    /* O tamanho do CONTEÚDO, não o do arquivo. Num arquivo cifrado eles
+       diferem pelos 33 bytes de selo, IV e tag — e quem pergunta o tamanho
+       quer saber quanto vai baixar. */
     async tamanho(relativo) {
-      try { return (await fsp.stat(caminhoReal(relativo))).size; } catch { return 0; }
+      try {
+        const alvo = caminhoReal(relativo);
+        const bruto = (await fsp.stat(alvo)).size;
+        const cabecalho = Buffer.alloc(cripto.TAM_CABECALHO);
+        const fd = await fsp.open(alvo, "r");
+        try {
+          const { bytesRead } = await fd.read(cabecalho, 0, cabecalho.length, 0);
+          const nosso = bytesRead === cabecalho.length && !!cripto.lerCabecalho(cabecalho);
+          return nosso ? bruto - cripto.TAM_CABECALHO - cripto.TAM_TAG : bruto;
+        } finally { await fd.close(); }
+      } catch { return 0; }
     },
   };
 }

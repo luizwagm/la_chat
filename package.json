@@ -1,6 +1,6 @@
 {
   "name": "la-chat",
-  "version": "0.8.0",
+  "version": "0.12.1",
   "private": true,
   "description": "LA Chat — módulo de comunicação corporativa em tempo real, instalável nos sites do gerador (WebSocket, SQLite ou PostgreSQL, sem passo de build).",
   "main": "server.js",
@@ -20,7 +20,9 @@
     "test:integracao": "node testes/integracao.cjs",
     "test:realtime": "node testes/realtime.cjs",
     "test:seguranca": "node testes/seguranca.cjs",
-    "test:e2e": "node testes/e2e.cjs"
+    "test:e2e": "node testes/e2e.cjs",
+    "test:video": "node testes/video.cjs",
+    "test:salas": "node testes/salas.cjs"
   },
   "dependencies": {
     "ws": "^8.18.0"

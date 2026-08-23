@@ -22,6 +22,8 @@ function montar(Q, { segredoBusca, registrarIp = true } = {}) {
     conversas: require("./conversas.js").criar(Q),
     mensagens: require("./mensagens.js").criar(Q, indice),
     anexos: require("./anexos.js").criar(Q),
+    chamadas: require("./chamadas.js").criar(Q),
+    salas: require("./salas.js").criar(Q),
     sessoes: require("./sessoes.js").criar(Q),
     auditoria: require("./auditoria.js").criar(Q, { registrarIp }),
   };

@@ -40,7 +40,12 @@ const http = require("node:http");
 const https = require("node:https");
 const crypto = require("node:crypto");
 
-/* 1.4 — `sincronizarElenco()` devolve também `desativados` e `mudou`, para o
+/* 1.5 — o LINK CURTO de reunião: `site.com/call/<codigo>` passa a ser
+   atendido aqui e redirecionado para dentro do prefixo do chat. Sem isto o
+   convite cai no 404 do site, porque a rota não existe lá. É o único caminho
+   FORA do prefixo que o conector atende, e o padrão é estreito de propósito —
+   11 caracteres do alfabeto dos códigos, e nada mais.
+   1.4 — `sincronizarElenco()` devolve também `desativados` e `mudou`, para o
    hospedeiro poder reenviar o elenco periodicamente sem encher o log.
    1.3 — o `Path` do cookie também é traduzido na VOLTA. A 1.1 corrigiu a ida;
    faltava a volta, e sem ela o chat montado fora de `/chat` autenticava e
@@ -52,7 +57,7 @@ const crypto = require("node:crypto");
    `prefixoRemoto` de lá). Antes, montar o chat fora de `/chat` fazia o passe
    funcionar e todo o resto responder 404. É contrato: quem atualizar o
    conector ganha isso sem mexer em mais nada. */
-const VERSAO_CONECTOR = "1.4";
+const VERSAO_CONECTOR = "1.5";
 
 function conectorChat(opcoes = {}) {
   const alvo = String(opcoes.url || process.env.CHAT_URL || "").replace(/\/+$/, "");
@@ -227,6 +232,33 @@ function conectorChat(opcoes = {}) {
 
     let caminho;
     try { caminho = new URL(req.url, "http://interno").pathname; } catch { return false; }
+
+    /* ----------------------------------------------------------------------
+       O LINK CURTO DE REUNIÃO — `site.com/call/<codigo>`
+
+       É o ÚNICO caminho fora do prefixo que o conector atende, e ele não é
+       repassado: vira um redirecionamento para dentro do prefixo, onde a
+       página do convidado e a API do chat se enxergam.
+
+       Repassar seria pior de um jeito difícil de descobrir: a página abriria
+       normalmente em `/call/<codigo>` e depois procuraria `/bilhete` e
+       `/chamadas/…` na RAIZ do site do cliente — endereços que pertencem ao
+       site, não ao chat. O sintoma seria uma reunião que abre e não conecta.
+
+       O regex é estreito de propósito: 11 caracteres do alfabeto dos códigos,
+       e nada mais. Um `/call/*` largo aqui daria ao chat um pedaço da raiz do
+       site do hospedeiro, que não é dele.
+       ---------------------------------------------------------------------- */
+    const curto = /^\/call\/([1-9A-HJ-NP-Za-km-z]{11})\/?$/.exec(caminho);
+    if (curto) {
+      res.writeHead(301, {
+        Location: prefixo + "/call/" + curto[1],
+        "Cache-Control": "no-store",
+      });
+      res.end();
+      return true;
+    }
+
     if (caminho !== prefixo && !caminho.startsWith(prefixo + "/")) return false;
 
     /* ----------------------------------------------------------------------

@@ -58,6 +58,23 @@ const EVENTOS = Object.freeze({
      chat aberto quando um funcionário foi cadastrado só o veria no F5 —
      e a aba "Pessoas" carregava uma vez e nunca mais. */
   ELENCO_MUDOU: "elenco.mudou",
+  /* ---------------------------------------------------------- reunião
+     O `sinal` é o único evento do barramento que NÃO é difusão: ele carrega
+     `paraIds` com uma pessoa só. Está aqui mesmo assim porque o caso de uso
+     não deve conhecer o transporte — quem entrega continua sendo o mesmo
+     ouvinte que entrega todo o resto. */
+  CHAMADA_TOCANDO: "chamada.tocando",
+  CHAMADA_ENTROU: "chamada.entrou",
+  CHAMADA_SAIU: "chamada.saiu",
+  CHAMADA_ENCERRADA: "chamada.encerrada",
+  CHAMADA_DISPOSITIVOS: "chamada.dispositivos",
+  CHAMADA_SINAL: "chamada.sinal",
+
+  /* ------------------------------------------------------------ sala por link
+     O aviso dos últimos minutos e o encerramento saem do SERVIDOR, e não do
+     relógio do navegador — que é do visitante e se adianta com um clique. */
+  SALA_AVISO: "sala.aviso",
+  SALA_ENCERRADA: "sala.encerrada",
   ARQUIVO_ENVIADO: "arquivo.enviado",
 });
 

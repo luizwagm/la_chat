@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow, noarchive">
+<meta name="referrer" content="no-referrer">
+<title>Reunião</title>
+
+<!-- ==========================================================================
+     A PÁGINA DO CONVIDADO
+
+     É a única página HTML deste serviço, e a única tela que uma pessoa de
+     fora da empresa vai ver. Três coisas a governam:
+
+     1. NADA É INTERPOLADO PELO SERVIDOR. O código da sala não vem no HTML;
+        o JavaScript o lê do endereço. XSS aqui não é "improvável": é
+        impossível, porque não existe caminho de texto para HTML.
+
+     2. NENHUM SCRIPT INLINE. A CSP desta página não tem `unsafe-inline` para
+        script — o comportamento mora em `sala.js`, servido pelo mesmo lugar.
+
+     3. O TÍTULO É GENÉRICO ATÉ SE SABER QUE O LINK VALE. "Reunião", não o
+        nome da empresa nem o assunto: o título vai para o histórico do
+        navegador, para a barra de tarefas e para a pré-visualização do
+        mensageiro, e nenhum desses lugares é privado.
+     ========================================================================== -->
+
+<style>
+  :root {
+    --fundo:   #0e1116;
+    --fundo-2: #161a21;
+    --fundo-3: #1e242d;
+    --linha:   #2b323d;
+    --tinta:   #e9ecf1;
+    --tinta-2: #a6aebc;
+    --tinta-3: #737c8c;
+    --acento:  #2c5cff;
+    --acento-texto: #ffffff;
+    --perigo:  #f87171;
+    --raio: 14px;
+    --fonte: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+             "Helvetica Neue", Arial, sans-serif;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0; height: 100%;
+    background: var(--fundo); color: var(--tinta);
+    font-family: var(--fonte);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* O fundo tem um brilho fraco no alto. É o que separa "tela preta de
+     produto" de "tela preta de erro" — e a diferença importa muito aqui,
+     porque metade das pessoas nunca viu este sistema antes. */
+  body {
+    background-image:
+      radial-gradient(120% 80% at 50% -10%, rgba(44, 92, 255, .16), transparent 60%);
+    background-repeat: no-repeat;
+  }
+
+  /* ---------------------------------------------------------------- telas
+     Uma tela de cada vez. `hidden` some com ela de verdade — a regra abaixo
+     existe porque `display:flex` vence o atributo, e esse foi um defeito
+     real deste projeto: a tela ficava preta e parecia falha de rede. */
+  .tela { display: none; min-height: 100dvh; align-items: center; justify-content: center; padding: 24px; }
+  .tela.vendo { display: flex; }
+  [hidden] { display: none !important; }
+
+  .cartao {
+    width: 100%; max-width: 460px;
+    background: var(--fundo-2);
+    border: 1px solid var(--linha);
+    border-radius: var(--raio);
+    padding: 28px;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, .45);
+    text-align: center;
+  }
+
+  .marca {
+    display: flex; align-items: center; justify-content: center; gap: 9px;
+    color: var(--tinta-3); font-size: 12px; letter-spacing: .10em;
+    text-transform: uppercase; margin-bottom: 20px;
+  }
+  .marca .ponto {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--acento); box-shadow: 0 0 0 4px rgba(44, 92, 255, .18);
+  }
+
+  h1 { margin: 0 0 6px; font-size: 21px; font-weight: 650; letter-spacing: -.01em; }
+  .sub { margin: 0 0 22px; color: var(--tinta-2); font-size: 14px; line-height: 1.5; }
+
+  /* --------------------------------------------------------------- câmera
+     A prévia responde à pergunta que toda pessoa faz antes de entrar numa
+     reunião: "estou aparecendo?". Ela NÃO tem botões de ligar e desligar de
+     propósito — prometer aqui um estado que a reunião não herda seria pior
+     do que não prometer nada. Os controles ficam dentro da chamada. */
+  .previa {
+    position: relative;
+    aspect-ratio: 16 / 10;
+    background: var(--fundo-3);
+    border: 1px solid var(--linha);
+    border-radius: 10px;
+    overflow: hidden;
+    margin-bottom: 18px;
+  }
+  .previa video {
+    width: 100%; height: 100%; object-fit: cover;
+    transform: scaleX(-1);          /* espelhado: é assim que a pessoa se vê */
+    display: block;
+  }
+  .previa .aviso {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    padding: 16px; text-align: center;
+    color: var(--tinta-3); font-size: 13px; line-height: 1.5;
+  }
+
+  /* ---------------------------------------------------------------- forma */
+  label { display: block; text-align: left; font-size: 13px; color: var(--tinta-2); margin-bottom: 6px; }
+
+  input[type="text"] {
+    width: 100%; padding: 12px 14px;
+    background: var(--fundo-3); color: var(--tinta);
+    border: 1px solid var(--linha); border-radius: 10px;
+    font: inherit; font-size: 15px;
+  }
+  input[type="text"]:focus-visible { outline: 2px solid var(--acento); outline-offset: 1px; border-color: transparent; }
+
+  button {
+    font: inherit; font-size: 15px; font-weight: 600;
+    padding: 12px 18px; border-radius: 10px; border: 1px solid transparent;
+    cursor: pointer; transition: filter .12s ease, opacity .12s ease;
+  }
+  button:disabled { opacity: .5; cursor: default; }
+  button:not(:disabled):hover { filter: brightness(1.1); }
+  .principal { width: 100%; margin-top: 14px; background: var(--acento); color: var(--acento-texto); }
+  .discreto { background: transparent; color: var(--tinta-2); border-color: var(--linha); }
+
+  .erro {
+    margin-top: 14px; padding: 10px 12px;
+    background: rgba(248, 113, 113, .10);
+    border: 1px solid rgba(248, 113, 113, .30);
+    border-radius: 9px; color: var(--perigo);
+    font-size: 13px; text-align: left; line-height: 1.45;
+  }
+
+  .rodape { margin-top: 22px; color: var(--tinta-3); font-size: 12px; line-height: 1.55; }
+
+  /* -------------------------------------------------------------- espera
+     O pulso lento diz "estamos vivos, continue esperando" sem escrever mais
+     uma frase. A animação some para quem pediu menos movimento. */
+  .pulso {
+    width: 46px; height: 46px; margin: 0 auto 18px;
+    border-radius: 50%; background: var(--acento);
+    animation: bater 2.4s ease-in-out infinite;
+  }
+  @keyframes bater {
+    0%, 100% { transform: scale(.86); box-shadow: 0 0 0 0 rgba(44, 92, 255, .40); }
+    50%      { transform: scale(1);   box-shadow: 0 0 0 16px rgba(44, 92, 255, 0); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .pulso { animation: none; }
+  }
+
+  /* ------------------------------------------------------------- reunião
+     Na chamada, o componente ocupa a tela inteira. */
+  #reuniao { padding: 0; display: none; }
+  #reuniao.vendo { display: block; height: 100dvh; }
+  la-chat { display: block; width: 100%; height: 100%; }
+</style>
+</head>
+<body>
+
+  <!-- 1. abrindo ------------------------------------------------------- -->
+  <section class="tela vendo" id="tela-carregando">
+    <div class="cartao">
+      <div class="marca"><span class="ponto"></span> Reunião</div>
+      <div class="pulso"></div>
+      <p class="sub" style="margin:0">Verificando o convite…</p>
+    </div>
+  </section>
+
+  <!-- 2. link recusado ------------------------------------------------- -->
+  <section class="tela" id="tela-recusa">
+    <div class="cartao">
+      <div class="marca"><span class="ponto" style="background:var(--perigo);box-shadow:none"></span> Reunião</div>
+      <h1>Não foi possível entrar</h1>
+      <p class="sub" id="recusa-msg"></p>
+      <p class="rodape">Se você recebeu este link de alguém, peça um novo.</p>
+    </div>
+  </section>
+
+  <!-- 3. esperando o anfitrião ----------------------------------------- -->
+  <section class="tela" id="tela-espera">
+    <div class="cartao">
+      <div class="marca"><span class="ponto"></span> Reunião</div>
+      <div class="pulso"></div>
+      <h1>A reunião ainda não começou</h1>
+      <p class="sub">Assim que o anfitrião abrir a sala, você entra automaticamente.
+        Pode deixar esta página aberta.</p>
+      <p class="rodape" id="espera-titulo"></p>
+    </div>
+  </section>
+
+  <!-- 4. seu nome ------------------------------------------------------ -->
+  <section class="tela" id="tela-nome">
+    <div class="cartao">
+      <div class="marca"><span class="ponto"></span> <span id="nome-titulo">Reunião</span></div>
+
+      <div class="previa">
+        <video id="previa-video" autoplay playsinline muted hidden></video>
+        <div class="aviso" id="previa-aviso">Ativando a câmera…</div>
+      </div>
+
+      <h1>Como quer ser chamado?</h1>
+      <p class="sub" id="nome-sub">Este nome aparece para todos na reunião.</p>
+
+      <form id="forma" novalidate>
+        <label for="nome">Seu nome</label>
+        <input type="text" id="nome" name="nome" autocomplete="name"
+               maxlength="40" placeholder="Ex.: Maria Souza" required>
+        <button type="submit" class="principal" id="entrar">Entrar na reunião</button>
+      </form>
+
+      <div class="erro" id="nome-erro" hidden></div>
+
+      <p class="rodape">
+        Ao entrar, seu nome e o horário ficam registrados para o anfitrião.
+        Nada é gravado.
+      </p>
+    </div>
+  </section>
+
+  <!-- 5. a reunião ----------------------------------------------------- -->
+  <section class="tela" id="reuniao"></section>
+
+  <!-- 6. acabou -------------------------------------------------------- -->
+  <section class="tela" id="tela-fim">
+    <div class="cartao">
+      <div class="marca"><span class="ponto" style="background:var(--tinta-3);box-shadow:none"></span> Reunião</div>
+      <h1 id="fim-titulo">Você saiu da reunião</h1>
+      <p class="sub" id="fim-msg">Obrigado por participar.</p>
+      <button type="button" class="discreto" id="voltar">Entrar de novo</button>
+    </div>
+  </section>
+
+  <script src="../cliente.js"></script>
+  <script src="../sala.js"></script>
+</body>
+</html>

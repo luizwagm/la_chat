@@ -63,8 +63,28 @@ function normalizar(origem) {
   }
 }
 
-function criarPorteiro(origensPermitidas = []) {
+/* ==========================================================================
+   A PRÓPRIA ORIGEM NUNCA PRECISOU DE CONVITE
+
+   Desde que existe a página do convidado (`/call/<codigo>`), este serviço
+   passou a servir HTML — e os pedidos dessa página trazem `Origin` igual ao
+   endereço do PRÓPRIO chat. Sem a linha abaixo, ela era recusada com
+   "Origem não autorizada", que é uma frase correta sobre um site invasor e
+   sem sentido nenhum sobre uma página que este servidor acabou de entregar.
+
+   Isto NÃO afrouxa a defesa contra CSWSH. O ataque é um site de TERCEIROS
+   usando o navegador da vítima; um pedido cuja origem é a nossa é, por
+   definição, mesma origem — o caso que toda a conferência existe para
+   distinguir do outro. Quem já está na nossa origem não precisa do
+   `Origin` para nos alcançar.
+
+   E o valor vem de `CHAT_BASE`, que é configuração do servidor: não há
+   como um visitante pôr a própria origem aqui dentro.
+   ========================================================================== */
+function criarPorteiro(origensPermitidas = [], base = "") {
   const lista = new Set(origensPermitidas.map(normalizar).filter(Boolean));
+  const propria = normalizar(base);
+  if (propria) lista.add(propria);
 
   return {
     lista: [...lista],

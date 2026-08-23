@@ -44,7 +44,16 @@ const extra = {
       ON usuarios (contexto_id, identidade)
       WHERE identidade <> '';
   `,
-  postgres: `
+  /* A CHAVE É `pg`, e não `postgres`.
+
+     O `migrar.js` procura `m.extra[T.tipo]`, e `T.tipo` vale "sqlite" ou "pg"
+     (ver banco.js). Escrito como `postgres`, este bloco NUNCA rodava: no
+     PostgreSQL o índice único de identidade simplesmente não existia, e a
+     trava contra pessoa duplicada valia só no SQLite — em silêncio, que é o
+     pior jeito de uma trava não existir.
+
+     Achado ao ler as convenções para a migração 003. */
+  pg: `
     CREATE UNIQUE INDEX IF NOT EXISTS ix_usuarios_identidade
       ON usuarios (contexto_id, identidade)
       WHERE identidade <> '';

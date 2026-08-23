@@ -171,14 +171,23 @@ function criar(Q) {
            pessoa. Assim, depois de recadastrada, ela continua sendo a mesma
            linha — com as conversas, as mensagens e as não-lidas onde estavam —
            e o `externo_id` passa a apontar para a conta que ela usa hoje. */
+        /* AVATAR: `undefined` mantém o que está; string (mesmo vazia) vale.
+
+           A diferença importa porque as duas portas de entrada sabem coisas
+           diferentes: o ELENCO vem do cadastro do hospedeiro e é a verdade
+           inteira — vazio ali significa "sem foto", e limpa. O PASSE vem da
+           SESSÃO, que em geral não carrega foto nenhuma — e era ele, a cada
+           login, que apagava o retrato recém-sincronizado (o defeito ficava
+           invisível onde o reenvio periódico repunha a foto em até 5 min). */
         const gravar = async (comExterno) => Q.run(
           `UPDATE usuarios SET externo_id = ?, identidade = ?, nome = ?, sobrenome = ?,
-                  email = ?, avatar = ?, cargo = ?, departamento = ?, papel = ?,
+                  email = ?, avatar = COALESCE(?, avatar), cargo = ?, departamento = ?, papel = ?,
                   situacao = 'ativa', ultimo_acesso = ?, atualizado_em = ?
              WHERE id = ?`,
           comExterno, identidade || achado.identidade || "",
           dados.nome, dados.sobrenome || "", cripto.cifrar(dados.email || ""),
-          avatarSeguro(dados.avatar), dados.cargo || "", dados.departamento || "",
+          dados.avatar === undefined ? null : avatarSeguro(dados.avatar),
+          dados.cargo || "", dados.departamento || "",
           dados.papel === "admin" ? "admin" : "membro", t, t, achado.id);
 
         try {
@@ -227,6 +236,44 @@ function criar(Q) {
     },
 
     /* ======================================================================
+       O CONVIDADO DE UMA SALA POR LINK
+
+       Ele vira uma linha em `usuarios` — e não uma tabela paralela — para poder
+       participar da malha de vídeo sem duplicar toda a lógica de chamada, de
+       participante e de sinalização. Duplicar essa lógica para dois tipos de
+       identidade seria criar um segundo caminho de autorização, que é como
+       nasce a porta que aceita quem a outra recusa.
+
+       O que o separa do funcionário:
+
+         `convidado = 1`   fora de toda listagem, busca e criação de grupo;
+         `externo_id`      prefixado, para nunca colidir com um id do hospedeiro
+                           (se colidisse, o convidado herdaria a conta de alguém
+                           na entrada seguinte daquela pessoa);
+         `papel` membro    convidado nunca é admin;
+         e, o que de fato protege, uma SESSÃO própria que só vale para a sala.
+
+       Cada entrada cria uma linha NOVA. Duas pessoas podem digitar o mesmo
+       nome, e a mesma pessoa entrando duas vezes são duas participações — o que
+       a auditoria precisa distinguir.
+       ====================================================================== */
+    async criarConvidado(contextoId, nome) {
+      const id = ulid();
+      const t = agora();
+      await Q.run(
+        `INSERT INTO usuarios (id, contexto_id, externo_id, identidade, nome, sobrenome,
+                               email, avatar, cargo, departamento, papel, situacao,
+                               convidado, ultimo_acesso, criado_em, atualizado_em)
+         VALUES (?, ?, ?, '', ?, '', '', '', '', '', 'membro', 'ativa', 1, ?, ?, ?)`,
+        id, contextoId, "convidado:" + id, String(nome).slice(0, 40), t, t, t);
+
+      await Q.run(
+        "INSERT INTO usuario_status (usuario_id, manual, visto_em) VALUES (?, 'online', ?)", id, t);
+
+      return paraFora(await Q.get(`SELECT ${CAMPOS} FROM usuarios WHERE id = ?`, id));
+    },
+
+    /* ======================================================================
        LEITURA
 
        `contextoId` é parâmetro OBRIGATÓRIO em tudo que lê pessoa. Não é
@@ -245,7 +292,10 @@ function criar(Q) {
          parametrizada e um SQL Injection com nome bonito. */
       const marcas = ids.map(() => "?").join(",");
       const linhas = await Q.all(
-        `SELECT ${CAMPOS} FROM usuarios WHERE contexto_id = ? AND id IN (${marcas})`,
+        /* `convidado = 0`: quem entrou por link não pode ser posto num grupo
+           interno nem aparecer numa lista de pessoas. É defesa em
+           profundidade — a proteção de verdade é a sessão (convidado.js). */
+        `SELECT ${CAMPOS} FROM usuarios WHERE contexto_id = ? AND convidado = 0 AND id IN (${marcas})`,
         contextoId, ...ids);
       return linhas.map(paraFora);
     },
@@ -265,6 +315,9 @@ function criar(Q) {
         `SELECT ${CAMPOS} FROM usuarios
           WHERE contexto_id = ?
             AND situacao = 'ativa'
+            /* Convidado de sala por link NUNCA aparece na busca do
+               diretório: para a empresa, ele não existe. */
+            AND convidado = 0
             AND (nome LIKE ? ESCAPE '\\' OR sobrenome LIKE ? ESCAPE '\\' OR departamento LIKE ? ESCAPE '\\')
           ORDER BY nome
           LIMIT ?`,
@@ -323,7 +376,7 @@ function criar(Q) {
     async listar(contextoId, limite = 200) {
       const linhas = await Q.all(
         `SELECT ${CAMPOS} FROM usuarios
-          WHERE contexto_id = ? AND situacao = 'ativa'
+          WHERE contexto_id = ? AND situacao = 'ativa' AND convidado = 0
           ORDER BY nome LIMIT ?`, contextoId, limite);
       return linhas.map(paraFora);
     },

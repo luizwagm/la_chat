@@ -138,6 +138,26 @@ ORIGENS="${3:-}"
 [ -n "$PORTA" ] || erro "informe a porta (a do site + 1000)"
 [ -n "$ORIGENS" ] || erro "informe as origens — vazio, o chat recusa todo mundo"
 
+# ==========================================================================
+#  O ENDEREÇO PÚBLICO — a primeira das origens
+#
+#  `CHAT_BASE` responde à pergunta "que endereço as pessoas usam para chegar
+#  aqui?". Ele não é enfeite desde que existe a REUNIÃO POR LINK: é com ele
+#  que o convite é montado. Sem `CHAT_BASE`, o padrão é
+#  `http://127.0.0.1:<porta>` — e o anfitrião mandaria ao cliente um link
+#  que só funciona dentro do servidor. Nada quebraria; o link simplesmente
+#  não abriria, do outro lado, sem explicação.
+#
+#  Ele também entra na lista de origens aceitas (ver seguranca/origem.js): a
+#  página do convidado é servida por este serviço, então os pedidos dela têm
+#  a origem do próprio chat.
+# ==========================================================================
+BASE_PUBLICA="${BASE_PUBLICA:-${ORIGENS%%,*}}"
+case "$BASE_PUBLICA" in
+  https://*|http://*) ;;
+  *) erro "a primeira origem precisa ser uma URL completa (https://…) — veio '$BASE_PUBLICA'";;
+esac
+
 case "$INSTANCIA" in
   *[!a-z0-9-]*) erro "o nome da instância aceita só letras minúsculas, números e hífen";;
 esac
@@ -182,6 +202,27 @@ else
     echo ""
     echo "# Só o site desta instância. Vazio = recusa todo mundo."
     echo "CHAT_ORIGENS=$ORIGENS"
+    echo ""
+    echo "# O endereço público. É com ele que o link de reunião é montado."
+    echo "# Errado, o convite sai apontando para dentro do servidor."
+    echo "CHAT_BASE=$BASE_PUBLICA"
+    echo ""
+    echo "# ======================================================================"
+    echo "#  REUNIÃO POR VÍDEO — desligada de propósito"
+    echo "#"
+    echo "#  Ligar sem TURN entrega um recurso que falha em 15% a 20% das"
+    echo "#  chamadas, concentradas em rede corporativa — que é justamente onde"
+    echo "#  o cliente vai testar. Meio funcionando é pior que desligado."
+    echo "#"
+    echo "#  Antes de descomentar: instale o coturn e endureça-o (docs/VIDEO.md)."
+    echo "#  As linhas \`no-loopback-peers\` e \`denied-peer-ip\` não são"
+    echo "#  opcionais: sem elas o relay alcança a rede interna do servidor, e"
+    echo "#  quem tem um link de reunião ganha credencial de TURN."
+    echo "# ======================================================================"
+    echo "# CHAT_VIDEO=1"
+    echo "# CHAT_TURN=turn:SEU.DOMINIO:3478?transport=udp,turn:SEU.DOMINIO:3478?transport=tcp"
+    echo "# CHAT_TURN_SEGREDO=<o mesmo static-auth-secret do coturn>"
+    echo "# CHAT_STUN=stun:SEU.DOMINIO:3478"
     echo ""
     echo "# CHAVES PRÓPRIAS DESTA INSTÂNCIA. Perder CHAT_DADOS_CHAVE torna o"
     echo "# histórico de conversas ilegível — o backup não salva."

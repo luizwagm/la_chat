@@ -34,9 +34,12 @@ do hospedeiro.
 - **Anexos e imagens** com validação de conteúdo real (não só da extensão),
   fora da pasta pública, com download autorizado por participação na conversa.
 - **Conversas diretas e grupos** desde o primeiro dia.
+- **Reunião por vídeo** (WebRTC em malha, até 6 pessoas) — a mídia vai direto
+  de um navegador ao outro, cifrada, **sem passar pelo servidor**. Câmera,
+  microfone, compartilhamento de tela e quem-está-falando. Desligada por padrão.
 - **Sem cadastro próprio de pessoas** — quem autentica é o site hospedeiro.
 - **Claro e escuro**, responsivo, teclado e leitor de tela (WCAG 2.1 AA).
-- **345 testes automatizados**, incluindo uma suíte que ataca o próprio sistema.
+- **473 testes automatizados**, incluindo uma suíte que ataca o próprio sistema.
 
 ## Requisitos
 
@@ -205,6 +208,7 @@ que valem a leitura antes da primeira subida:
 | [docs/SECURITY.md](docs/SECURITY.md) | OWASP item a item |
 | [docs/DATABASE.md](docs/DATABASE.md) | esquema, índices e o porquê de cada um |
 | [docs/REALTIME.md](docs/REALTIME.md) | protocolo, presença, reconexão |
+| [docs/VIDEO.md](docs/VIDEO.md) | reunião: malha, teto, TURN e o que não existe |
 | [docs/STORAGE.md](docs/STORAGE.md) | anexos e a troca por S3 |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | systemd, nginx, TLS |
 | [docs/TESTING.md](docs/TESTING.md) | como as suítes são escritas |
@@ -226,6 +230,6 @@ Grupos, respostas, edição e exclusão **estão** implementados.
 
 ## Versão
 
-`0.3.0` — ver [CHANGELOG.md](CHANGELOG.md).
+`0.9.1` — ver [CHANGELOG.md](CHANGELOG.md).
 
 LA Software House · <https://luizaugust.me>

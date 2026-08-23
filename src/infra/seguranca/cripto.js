@@ -172,7 +172,95 @@ function impressaoDigital(valor) {
   return crypto.createHmac("sha256", chaves[VERSAO_ATUAL]).update(limpo).digest("hex");
 }
 
+/* ==========================================================================
+   BYTES — o formato de ARQUIVO, que não é o formato de campo
+
+   `cifrar()` devolve texto (`enc:1:iv:tag:dados` em base64) porque o destino
+   dele é uma coluna de banco. Para um anexo de 10 MB isso seria errado em dois
+   sentidos: base64 infla 33% e obriga o arquivo inteiro a virar string na
+   memória, duas vezes, a cada download.
+
+   O formato de arquivo é binário e tem os campos na ordem em que são
+   NECESSÁRIOS para ler:
+
+       "LAC1"  versão   IV        …dados cifrados…        TAG
+       4 bytes  1 byte   12 bytes  n bytes                 16 bytes
+
+   O selo no começo é o que torna a mudança segura para quem já tem anexos no
+   disco: arquivo SEM o selo é conteúdo antigo, em claro, e é devolvido como
+   está. Sem essa marca, ligar a cifra tornaria ilegível todo anexo já enviado
+   — e o backup não ajudaria, porque o backup também está em claro.
+
+   A TAG FICA NO FIM porque só existe depois de cifrar tudo. É por isso que a
+   leitura por fluxo precisa buscá-la antes de começar (ver `armazenamento.js`):
+   GCM não autentica nada até ter a tag, e entregar bytes não autenticados ao
+   navegador seria abrir mão exatamente do que o GCM oferece.
+   ========================================================================== */
+const SELO = Buffer.from("LAC1", "ascii");
+const TAM_CABECALHO = SELO.length + 1 + 12;   // selo + versão + IV
+const TAM_TAG = 16;
+
+function ehArquivoCifrado(buf) {
+  return Buffer.isBuffer(buf) && buf.length >= TAM_CABECALHO && buf.subarray(0, 4).equals(SELO);
+}
+
+function cifrarBytes(bytes) {
+  const chaves = carregarChaves();
+  if (!chaves) throw new Error("não posso gravar anexo sem a chave: " + ERRO_CHAVE);
+
+  const iv = crypto.randomBytes(12);
+  const c = crypto.createCipheriv(ALGORITMO, chaves[VERSAO_ATUAL], iv);
+  const corpo = Buffer.concat([c.update(bytes), c.final()]);
+
+  return Buffer.concat([
+    SELO,
+    Buffer.from([VERSAO_ATUAL.charCodeAt(0)]),
+    iv,
+    corpo,
+    c.getAuthTag(),
+  ]);
+}
+
+function decifrarBytes(buf) {
+  /* Não é nosso: é anexo anterior à cifra. Volta como está — é o que permite
+     ligar isto num servidor que já tem arquivos. */
+  if (!ehArquivoCifrado(buf)) return buf;
+
+  const cab = lerCabecalho(buf.subarray(0, TAM_CABECALHO));
+  if (!cab) return buf;
+
+  const chaves = carregarChaves();
+  if (!chaves || !chaves[cab.versao]) throw new Error("anexo cifrado e sem a chave: " + ERRO_CHAVE);
+
+  const d = crypto.createDecipheriv(ALGORITMO, chaves[cab.versao], cab.iv);
+  d.setAuthTag(buf.subarray(buf.length - TAM_TAG));
+  return Buffer.concat([
+    d.update(buf.subarray(TAM_CABECALHO, buf.length - TAM_TAG)),
+    d.final(),
+  ]);
+}
+
+/* Para a leitura por fluxo: quem lê os 17 primeiros bytes descobre aqui se o
+   arquivo é nosso e, se for, com que IV decifrar. */
+function lerCabecalho(buf) {
+  if (!ehArquivoCifrado(buf)) return null;
+  return {
+    versao: String.fromCharCode(buf[SELO.length]),
+    iv: Buffer.from(buf.subarray(SELO.length + 1, TAM_CABECALHO)),
+  };
+}
+
+function decifradorDeFluxo({ versao, iv, tag }) {
+  const chaves = carregarChaves();
+  if (!chaves || !chaves[versao]) throw new Error("anexo cifrado e sem a chave: " + ERRO_CHAVE);
+  const d = crypto.createDecipheriv(ALGORITMO, chaves[versao], iv);
+  d.setAuthTag(tag);
+  return d;
+}
+
 module.exports = {
   cifrar, decifrar, jaCifrado, impressaoDigital,
   chaveConfigurada, erroChave, PREFIXO, digitos,
+  cifrarBytes, decifrarBytes, ehArquivoCifrado, lerCabecalho, decifradorDeFluxo,
+  TAM_CABECALHO, TAM_TAG,
 };

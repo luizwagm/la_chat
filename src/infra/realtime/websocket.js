@@ -47,7 +47,7 @@
 const { WebSocketServer } = require("ws");
 const { TIPOS } = require("./transporte.js");
 
-function criarTransporteWS({ conf, porteiro, sessoes, servico, repos, limites, ipDe, ipEmHash }) {
+function criarTransporteWS({ conf, porteiro, sessoes, servico, chamadas, repos, limites, ipDe, ipEmHash }) {
   const wss = new WebSocketServer({
     noServer: true,
     /* Quadro maior que o teto derruba a conexão em vez de alocar. */
@@ -170,6 +170,18 @@ function criarTransporteWS({ conf, porteiro, sessoes, servico, repos, limites, i
 
         ws.on("close", () => {
           const restantes = desregistrar(ws);
+
+          /* FECHAR A ABA NÃO MANDA "SAIR DA REUNIÃO".
+
+             Sem esta linha a pessoa fica eternamente `dentro` para os outros —
+             um retrato congelado no grid — e a chamada nunca encerra sozinha,
+             o que trava o índice único e faz o botão de chamar "parar de
+             funcionar" naquela conversa.
+
+             Só quando a ÚLTIMA conexão dela cai: fechar uma de duas abas não
+             tira ninguém da reunião. */
+          if (restantes === 0) chamadas?.socketCaiu(ws.usuarioId);
+
           repos.presenca
             .fechouCanal(ws.usuarioId, restantes, conf.realtime.carenciaOfflineMs)
             .then((ficouOffline) => {
@@ -319,6 +331,35 @@ function criarTransporteWS({ conf, porteiro, sessoes, servico, repos, limites, i
           await servico.marcarLida(sessao, String(m.c || ""), Number(m.seq) || 0);
           break;
 
+        /* ==================================================================
+           O SINAL DO WebRTC — o único evento de reunião que vem pelo SOCKET.
+
+           Iniciar, entrar, sair e mudo continuam indo por HTTP, onde já há
+           CSRF, limitador e tratamento de erro. O sinal vem por aqui porque é
+           o único de ALTA FREQUÊNCIA: montar uma malha de seis pessoas troca
+           algumas centenas de candidatos ICE em poucos segundos, e cada um
+           deles por HTTP seria uma requisição inteira com cabeçalhos.
+
+           A autorização NÃO é relaxada por isso: `servico.sinalizar` confere,
+           a cada sinal, que quem manda está dentro da chamada e que quem
+           recebe também está. E o `de` é carimbado pela sessão do socket,
+           nunca lido do corpo.
+           ================================================================== */
+        case TIPOS.CHAMADA_SINAL: {
+          /* Balde próprio e mais largo que o geral: 240/min derrubaria a
+             negociação de uma reunião de seis pessoas no meio, e o sintoma
+             seria "a chamada conecta com uns e não com outros". */
+          const vaga = limites.conferir(`sinal:${ws.sessaoId}`, { maximo: 900, janelaMs: 60e3 });
+          if (!vaga.ok) break;
+
+          await chamadas.sinalizar(sessao, String(m.c || ""), {
+            tipo: String(m.tipo || ""),
+            para: String(m.para || ""),
+            dados: m.dados,
+          });
+          break;
+        }
+
         case TIPOS.SINCRONIZAR: {
           const r = await servico.sincronizar(sessao, String(m.c || ""), Number(m.desde) || 0);
           enviar(ws, { t: TIPOS.SINCRONIZAR, c: m.c, ...r });
@@ -412,6 +453,21 @@ function ligarAoBarramento({ barramento, transporte, EVENTOS }) {
   });
 
   /* ==========================================================================
+     SALA POR LINK
+
+     O aviso e o fim vêm do SERVIDOR. O navegador até sabe a hora de término,
+     mas o relógio dele é do visitante — e adiantá-lo é um clique nas
+     configurações do sistema. Quem encerra a reunião é quem a hospeda.
+     ========================================================================== */
+  barramento.escutar(EVENTOS.SALA_AVISO, ({ paraIds, salaId, restanteMs }) => {
+    transporte.publicar(paraIds, { t: "sala.aviso", s: salaId, restanteMs });
+  });
+
+  barramento.escutar(EVENTOS.SALA_ENCERRADA, ({ paraIds, salaId, motivo }) => {
+    transporte.publicar(paraIds, { t: "sala.fim", s: salaId, motivo });
+  });
+
+  /* ==========================================================================
      EXPULSAR — bloqueio e saída fecham o canal na hora.
 
      Sem este ouvinte, apagar a sessão no banco cortava só o HTTP: o WebSocket
@@ -433,6 +489,68 @@ function ligarAoBarramento({ barramento, transporte, EVENTOS }) {
     /* Avisa para a barra lateral do outro lado aparecer sozinha, sem F5. */
     transporte.publicar(membros, { t: "conversa", c: conversaId });
   });
+
+  /* ==========================================================================
+     REUNIÃO
+
+     Todos entregam para `paraIds`, que veio do BANCO — a lista de quem está
+     dentro da chamada, ou de quem deve receber o toque. A lista de conexões
+     abertas nunca decide quem recebe; ela só decide quem consegue receber
+     agora.
+     ========================================================================== */
+
+  barramento.escutar(EVENTOS.CHAMADA_TOCANDO, ({ paraIds, chamadaId, conversaId, de, chamada }) => {
+    transporte.publicar(paraIds, {
+      t: "cham.toca", c: conversaId, id: chamadaId, de, chamada,
+    });
+  });
+
+  barramento.escutar(EVENTOS.CHAMADA_ENTROU, ({ paraIds, chamadaId, conversaId, usuarioId, participantes }) => {
+    /* Vai para quem JÁ ESTAVA dentro, inclusive para quem entrou — o cliente
+       precisa da lista completa para saber com quantas pessoas abrir conexão.
+       Quem entrou é identificado por `u`, e é ele quem NÃO deve iniciar a
+       oferta: ver a regra do "educado" em docs/VIDEO.md. */
+    transporte.publicar(paraIds, {
+      t: "cham.entrou", c: conversaId, id: chamadaId, u: usuarioId,
+      participantes: (participantes || []).map((p) => ({
+        id: p.usuario_id, estado: p.estado,
+        microfone: !!p.microfone, camera: !!p.camera, tela: !!p.tela,
+      })),
+    });
+  });
+
+  barramento.escutar(EVENTOS.CHAMADA_SAIU, ({ paraIds, chamadaId, conversaId, usuarioId, motivo }) => {
+    transporte.publicar(paraIds, {
+      t: "cham.saiu", c: conversaId, id: chamadaId, u: usuarioId, motivo,
+    });
+  });
+
+  barramento.escutar(EVENTOS.CHAMADA_ENCERRADA, ({ paraIds, chamadaId, conversaId, motivo }) => {
+    transporte.publicar(paraIds, {
+      t: "cham.fim", c: conversaId, id: chamadaId, motivo,
+    });
+  });
+
+  barramento.escutar(EVENTOS.CHAMADA_DISPOSITIVOS, ({ paraIds, chamadaId, usuarioId, microfone, camera, tela }) => {
+    transporte.publicar(paraIds, {
+      t: "cham.disp", id: chamadaId, u: usuarioId, microfone, camera, tela,
+    }, { exceto: usuarioId });
+  });
+
+  /* ==========================================================================
+     O SINAL — o único evento que vai para UMA pessoa
+
+     `de` foi carimbado pelo servidor em `aplicacao/chamadas.js`, a partir da
+     sessão do socket. O campo que veio do cliente foi descartado lá. Se um dia
+     alguém propagar o `de` do corpo até aqui, qualquer participante passa a
+     conseguir injetar uma oferta de mídia em nome de outro.
+     ========================================================================== */
+  barramento.escutar(EVENTOS.CHAMADA_SINAL, ({ paraIds, chamadaId, de, tipo, dados }) => {
+    transporte.publicar(paraIds, {
+      t: "cham.sinal", id: chamadaId, de, tipo, dados,
+    });
+  });
+
 }
 
 module.exports = { criarTransporteWS, ligarAoBarramento };

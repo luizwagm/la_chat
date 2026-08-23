@@ -34,6 +34,10 @@ const { ipDe, ipEmHash, ehLoopback } = require("./src/infra/seguranca/ip.js");
 const armazenamento = require("./src/infra/storage/armazenamento.js");
 const barramentoModulo = require("./src/infra/eventos/barramento.js");
 const { criarServico } = require("./src/aplicacao/chat.js");
+const { criarServicoDeChamadas } = require("./src/aplicacao/chamadas.js");
+const { criarTurn } = require("./src/infra/seguranca/turn.js");
+const { criarServicoDeSalas } = require("./src/aplicacao/salas.js");
+const { criarConvidados } = require("./src/infra/seguranca/convidado.js");
 const { criarTransporteWS, ligarAoBarramento } = require("./src/infra/realtime/websocket.js");
 const { criarRotas } = require("./src/http/rotas.js");
 const { responder, responderErro } = require("./src/http/responder.js");
@@ -71,7 +75,7 @@ async function principal() {
   });
 
   const limites = criarLimites();
-  const porteiro = criarPorteiro(CONF.origensPermitidas);
+  const porteiro = criarPorteiro(CONF.origensPermitidas, CONF.base);
   const hashDeIp = (ip) => ipEmHash(ip, CONF.segredos.passe);
 
   /* --------------------------------------------------------------- storage */
@@ -85,9 +89,43 @@ async function principal() {
     armazenamento: disco, sessoes, passes, ipEmHash: hashDeIp,
   });
 
+  /* ----------------------------------------------------------------- vídeo
+     O TURN é montado mesmo com o vídeo desligado: assim `verificar.sh` e a
+     suíte conseguem conferir a conta da credencial sem ligar o recurso. */
+  const turn = criarTurn({
+    urls: CONF.video.turn,
+    segredo: CONF.video.turnSegredo,
+    stun: CONF.video.stun,
+    ttlSegundos: CONF.video.turnTtl,
+    soRelay: CONF.video.soRelay,
+  });
+
+  const chamadas = criarServicoDeChamadas({
+    repos, conf: CONF, barramento, limites, turn,
+    /* A autorização da reunião é a MESMA da conversa. Passar a função em vez
+       de reimplementar é o que garante que as duas nunca divirjam. */
+    exigirMembro: servico.exigirMembro,
+  });
+
+  /* ------------------------------------------------------------ sala por link
+     A sessão de CONVIDADO é montada em separado da de funcionário — e é essa
+     separação que impede quem entra por link de alcançar o chat da empresa.
+     Ver seguranca/convidado.js. */
+  const convidados = criarConvidados({
+    segredo: CONF.segredos.passe,
+    seguro: CONF.producao,
+    entreSites: CONF.entreSites,
+    caminho: CONF.prefixo,
+  });
+
+  const salas = criarServicoDeSalas({
+    repos, conf: CONF, barramento, limites, convidados,
+    chamadas, servicoChat: servico, ipEmHash: hashDeIp,
+  });
+
   /* --------------------------------------------------------------- realtime */
   const transporte = criarTransporteWS({
-    conf: CONF, porteiro, sessoes, servico, repos, limites,
+    conf: CONF, porteiro, sessoes, servico, chamadas, repos, limites,
     ipDe: (req) => ipDe(req, CONF.proxiesConfiaveis),
     ipEmHash: hashDeIp,
   });
@@ -168,7 +206,36 @@ async function principal() {
 `);
   }
 
-  const rotas = criarRotas({ servico, sessoes, conf: CONF, porteiro, saude });
+  /* ==========================================================================
+     VÍDEO LIGADO E SEM RELAY — o aviso que evita um chamado
+
+     De 15% a 20% das chamadas não fecham direto, e essa fatia NÃO é aleatória:
+     concentra-se em rede corporativa, que é o público deste chat. O sintoma é
+     "às vezes não conecta" — intermitente, no cliente que mais importa, e quase
+     impossível de diagnosticar por telefone.
+
+     E desde a reunião por link há um segundo motivo: sem TURN, a sala não
+     consegue forçar o relay, e os participantes passam a ver o IP uns dos
+     outros — inclusive o estranho que recebeu o convite.
+
+     O serviço SOBE assim mesmo. Recusar seria pior: uma instalação em rede
+     local, para testar, é legítima. Mas ninguém deve descobrir isso pelo
+     cliente reclamando.
+     ========================================================================== */
+  if (CONF.video.ativo && !CONF.video.turn.length) {
+    console.warn(`
+  ⚠  VÍDEO LIGADO SEM TURN
+
+     De 15% a 20% das chamadas vão falhar, concentradas em rede corporativa.
+     E a reunião por link não consegue forçar o relay: os participantes vão
+     ver o endereço IP uns dos outros, o convidado de fora inclusive.
+
+     Configure CHAT_TURN e CHAT_TURN_SEGREDO — ver docs/VIDEO.md.
+`);
+  }
+
+  const rotas = criarRotas({ servico, chamadas, salas, sessoes, convidados,
+    conf: CONF, porteiro, saude });
 
   /* ==========================================================================
      O CLIENTE
@@ -178,6 +245,7 @@ async function principal() {
      recopiar arquivo. É a mesma razão de o conector ser fino.
      ========================================================================== */
   const arquivoCliente = path.join(CONF.caminhos.publico, "la-chat.js");
+  const arquivoVideo = path.join(CONF.caminhos.publico, "la-chat-video.js");
 
   /* ==========================================================================
      SERVIDOR HTTP
@@ -197,6 +265,29 @@ async function principal() {
     conferirProxies(req);
 
     const caminho = decodeURIComponent(url.pathname);
+
+    /* ==========================================================================
+       O LINK CURTO — `/call/<codigo>`, sem o prefixo
+
+       O convite que uma pessoa recebe é `site.com/call/aBc…`. Curto, sem
+       `/chat` no meio, e é o que foi pedido. Mas TODO o resto do chat vive
+       sob o prefixo, e a página do convidado precisa falar com essa API:
+       servir a página no endereço curto a deixaria procurando `/bilhete` e
+       `/chamadas/…` na raiz do site do cliente, onde não há nada.
+
+       Um redirecionamento resolve os dois lados sem conflito: o link curto é
+       o que circula, e o navegador termina sob o prefixo, onde a página e a
+       API se enxergam. Vale igual para quem chega direto neste serviço e
+       para quem chega pelo conector do hospedeiro.
+       ========================================================================== */
+    if (!caminho.startsWith(CONF.prefixo) && /^\/call\/[^/]+\/?$/.test(caminho)) {
+      const codigo = caminho.split("/").filter(Boolean)[1] || "";
+      res.writeHead(301, {
+        Location: CONF.prefixo + "/call/" + encodeURIComponent(codigo),
+        "Cache-Control": "no-store",
+      });
+      return res.end();
+    }
 
     /* Fora do prefixo: não é conosco. */
     if (!caminho.startsWith(CONF.prefixo))
@@ -223,17 +314,42 @@ async function principal() {
        ========================================================================== */
     if (req.method === "GET" && (interno === "/cliente.js" || interno === "/la-chat.js")) {
       try {
-        const info = await fs.promises.stat(arquivoCliente);
-        /* Tamanho + instante de modificação: muda quando o arquivo muda, e não
-           custa ler o arquivo inteiro para calcular um hash a cada requisição. */
-        const etag = `W/"${info.size.toString(36)}-${Math.floor(info.mtimeMs).toString(36)}"`;
+        /* ====================================================================
+           CONCATENAÇÃO NA ENTREGA — o "passo de build" que não existe
+
+           O cliente é escrito em arquivos separados e servido como um só. Não
+           há bundler, não há etapa de compilação: o servidor lê os arquivos e
+           junta, e o ETag cobre todos eles.
+
+           O VÍDEO SÓ ENTRA SE ESTIVER LIGADO. Numa instalação sem reunião,
+           `la-chat-video.js` não é lido, não é baixado e não é avaliado — o
+           recurso não existe, em vez de existir escondido atrás de um `if` no
+           navegador de todo mundo.
+           ==================================================================== */
+        const partes = [arquivoCliente];
+        if (CONF.video.ativo) partes.push(arquivoVideo);
+
+        const infos = await Promise.all(partes.map((f) => fs.promises.stat(f)));
+
+        /* O ETag junta tamanho e data de CADA parte. Com o de um arquivo só,
+           mexer no vídeo não invalidaria o cache e a correção não chegaria —
+           que é exatamente o defeito que este cabeçalho existe para evitar. */
+        const etag = 'W/"' + infos
+          .map((i) => i.size.toString(36) + "-" + Math.floor(i.mtimeMs).toString(36))
+          .join(".") + '"';
 
         if (req.headers["if-none-match"] === etag) {
           res.writeHead(304, { ETag: etag, "Cache-Control": "no-cache" });
           return res.end();
         }
 
-        const js = await fs.promises.readFile(arquivoCliente);
+        const pedacos = await Promise.all(partes.map((f) => fs.promises.readFile(f)));
+        /* A quebra de linha entre os arquivos não é enfeite: sem ela, um
+           arquivo terminado em comentário de linha (`// …`) engoliria a
+           primeira linha do seguinte. */
+        const js = Buffer.concat(
+          pedacos.flatMap((p, n) => (n ? [Buffer.from("\n;\n"), p] : [p])));
+
         res.writeHead(200, {
           "Content-Type": "application/javascript; charset=utf-8",
           "Content-Length": js.length,
@@ -244,6 +360,41 @@ async function principal() {
         return res.end(js);
       } catch {
         return responder(res, 404, { erro: "Cliente não encontrado." });
+      }
+    }
+
+    /* ==========================================================================
+       O SCRIPT DA PÁGINA DO CONVIDADO
+
+       Arquivo à parte, e não script embutido no HTML, porque a CSP daquela
+       página não tem `unsafe-inline` para script. Abrir a exceção seria
+       afrouxar justamente a única página que qualquer estranho alcança —
+       trocar a defesa contra injeção por uma requisição a menos.
+
+       Só existe com o vídeo ligado: sem reunião não há sala, e um arquivo
+       servido "por via das dúvidas" é superfície de graça.
+       ========================================================================== */
+    if (req.method === "GET" && interno === "/sala.js" && CONF.video.ativo) {
+      const arquivoSala = path.join(CONF.caminhos.publico, "sala.js");
+      try {
+        const info = await fs.promises.stat(arquivoSala);
+        const etag = 'W/"' + info.size.toString(36) + "-"
+          + Math.floor(info.mtimeMs).toString(36) + '"';
+        if (req.headers["if-none-match"] === etag) {
+          res.writeHead(304, { ETag: etag, "Cache-Control": "no-cache" });
+          return res.end();
+        }
+        const js = await fs.promises.readFile(arquivoSala);
+        res.writeHead(200, {
+          "Content-Type": "application/javascript; charset=utf-8",
+          "Content-Length": js.length,
+          "Cache-Control": "no-cache",
+          ETag: etag,
+          "X-Content-Type-Options": "nosniff",
+        });
+        return res.end(js);
+      } catch {
+        return responder(res, 404, { erro: "Não encontrado." });
       }
     }
 
@@ -333,6 +484,12 @@ async function principal() {
   const faxina = setInterval(async () => {
     try {
       await repos.sessoes.faxina();
+
+      /* As chamadas que ninguém encerrou: o toque que ninguém atendeu, a
+         reunião que ficou vazia porque o processo reiniciou no meio. Sem esta
+         varredura o índice único vira trava permanente e o botão de chamar
+         "para de funcionar" naquela conversa, para sempre. */
+      if (CONF.video.ativo) await chamadas.faxina();
       if (CONF.auditoria.diasParaGuardar > 0)
         await repos.auditoria.expurgar(CONF.auditoria.diasParaGuardar);
 
@@ -349,6 +506,24 @@ async function principal() {
     }
   }, 30 * 60e3);
   faxina.unref();
+
+  /* ==========================================================================
+     O RELÓGIO DAS SALAS
+
+     Separado da faxina de meia em meia hora, e de propósito: o aviso dos
+     últimos cinco minutos e o encerramento no horário precisam de granularidade
+     de SEGUNDOS. Encerrar uma reunião "em algum momento da próxima meia hora"
+     não é encerrar no tempo definido.
+
+     Vinte segundos: o aviso sai com no máximo 20s de atraso dentro de uma
+     janela de cinco minutos, e a reunião acaba no minuto certo. É consulta
+     barata — duas leituras indexadas — e só roda com o vídeo ligado.
+     ========================================================================== */
+  const relogioDasSalas = CONF.video.ativo ? setInterval(async () => {
+    try { await salas.faxina(); }
+    catch (e) { console.error("  ⚠ relógio das salas:", e.message); }
+  }, 20_000) : null;
+  relogioDasSalas?.unref();
 
   /* ==========================================================================
      SUBIR
@@ -383,6 +558,7 @@ async function principal() {
     console.log(`\n  ${sinal} — encerrando…`);
 
     clearInterval(faxina);
+    if (relogioDasSalas) clearInterval(relogioDasSalas);
     servidor.close();
     transporte.encerrarTudo();
     limites.encerrar();
