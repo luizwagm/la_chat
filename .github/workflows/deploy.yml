@@ -88,6 +88,12 @@ jobs:
       - name: Ensaio do deploy (instala duas instâncias num sandbox)
         run: bash ci/ensaiar.sh
 
+      # O RELAY é a peça mais sensível do vídeo: é ele que recebe credencial de
+      # todo portador de um link de reunião. Um `denied-peer-ip` esquecido não
+      # dá erro na hora — dá erro meses depois, no servidor de um cliente.
+      - name: Ensaio do relay (coturn num sandbox, com as travas de rede)
+        run: bash ci/ensaiar-relay.sh
+
       # O conector é copiado para dentro dos sites; a versão dele é o que
       # permite saber quem está atrasado. Um commit que muda o arquivo sem
       # subir a versão torna o `--conferir` cego.

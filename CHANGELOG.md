@@ -5,6 +5,66 @@ recurso, 3ª para correção. Nenhuma casa para no 9.
 
 ---
 
+## 0.13.0 — 23/08/2026 · o relay de vídeo tem instalador
+
+`criar-relay.sh` — roda **uma vez por servidor** e deixa o coturn pronto:
+
+    sudo ./criar-relay.sh chat.luizaugust.me
+
+DNS, IP público, segredo, vhost, certificado, coturn endurecido, permissões,
+gancho de renovação, firewall e conferência final. **27 asserções** no
+`ci/ensaiar-relay.sh`, que roda o script inteiro num diretório temporário com
+dublês de certbot, nginx, systemctl e apt — e entrou no portão do CI.
+
+### O vhost que não serve nada, e por que existe
+
+O coturn **não passa pelo nginx**: escuta direto nas portas 3478 e 5349. O vhost
+existe por um motivo só — permitir ao certbot emitir e **renovar** o certificado
+que o coturn usa no `turns:`. Sem TLS, o relay não atravessa firewall corporativo
+que só deixa passar 443, que é exatamente a rede onde o TURN mais faz falta.
+
+Por isso ele responde `404` a tudo que não seja o desafio da ACME, e não repassa
+para lugar nenhum. Está escrito no cabeçalho do arquivo gerado, para ninguém
+removê-lo achando que sobrou.
+
+### A armadilha de 90 dias
+
+**O coturn lê o certificado ao subir e não o relê nunca mais.** O certbot renova
+sozinho e escreve arquivos novos; sem gancho, o relay continuaria servindo o
+antigo, já vencido, até alguém reiniciá-lo.
+
+O sintoma chegaria três meses depois da instalação, sumiria assim que alguém
+reiniciasse para investigar, e voltaria noventa dias depois. O script instala
+`/etc/letsencrypt/renewal-hooks/deploy/10-coturn.sh`, e o ensaio confere que ele
+existe, é executável e reinicia o serviço.
+
+### O que o endurecimento cobre
+
+Além do que `docs/VIDEO.md` já pedia:
+
+* **`no-cli`** — o coturn abre, por padrão, um console telnet em
+  `127.0.0.1:5766`. Num servidor com vinte sites, "só o loopback" não é
+  isolamento: é exatamente o alcance que uma falha em qualquer um dos vinte
+  concede.
+* **As faixas privadas de IPv6** (`::1`, `fc00::/7`, `fe80::/10`) — estavam
+  faltando. Numa máquina com IPv6, que é toda máquina em nuvem hoje, esquecê-las
+  reabria o buraco inteiro.
+* **`no-tlsv1` / `no-tlsv1_1`**, `fingerprint`, `stale-nonce`, e a faixa de relay
+  explícita, para bater com a regra do firewall.
+
+### O segredo é do SERVIDOR, não do cliente
+
+Um coturn atende todas as instâncias, então o mesmo `static-auth-secret` vai no
+env de cada uma. O raio de alcance ficou escrito no script e na documentação:
+vazando o env de um cliente, vaza o relay de todos — e **nada além disso**, porque
+`CHAT_DADOS_CHAVE` continua sendo uma por instância.
+
+Gerado uma vez e **nunca** regerado: trocá-lo sem trocar nos clientes derrubaria
+o vídeo de todos ao mesmo tempo, com um erro que o navegador reporta como "falha
+de rede". O ensaio roda o script duas vezes para provar isso.
+
+---
+
 ## 0.12.1 — 23/08/2026 · a documentação que mentia, e o aviso que faltava
 
 `docs/VIDEO.md` listava **"sala com link para gente de fora"** entre o que o

@@ -153,6 +153,19 @@ diagnosticar por telefone.
 
 ### Instalar o coturn
 
+**O caminho curto é o script**, que faz tudo desta seção e mais o que ela não
+cobre — DNS, certificado, permissão da chave e o gancho de renovação:
+
+```bash
+sudo ./criar-relay.sh chat.seudominio.com
+```
+
+Ele roda **uma vez por servidor**: um coturn atende todas as instâncias do chat.
+O que é por cliente é ligar `CHAT_VIDEO=1` no `/etc/lachat-<cliente>.env`.
+
+O resto desta seção explica o que o script escreve, e serve para conferir ou
+para instalar à mão.
+
 ```bash
 apt install coturn
 ```
