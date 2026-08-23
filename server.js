@@ -98,6 +98,7 @@ async function principal() {
     stun: CONF.video.stun,
     ttlSegundos: CONF.video.turnTtl,
     soRelay: CONF.video.soRelay,
+    salaRelay: CONF.video.salaRelay,
   });
 
   const chamadas = criarServicoDeChamadas({
@@ -222,6 +223,18 @@ async function principal() {
      local, para testar, é legítima. Mas ninguém deve descobrir isso pelo
      cliente reclamando.
      ========================================================================== */
+  if (CONF.video.ativo && CONF.video.turn.length && !CONF.video.salaRelay) {
+    console.warn(`
+  ⚠  REUNIÃO POR LINK SEM RELAY OBRIGATÓRIO (CHAT_VIDEO_SALA_RELAY=0)
+
+     A mídia vai tentar o caminho direto, e os participantes vão VER O IP uns
+     dos outros — inclusive o convidado de fora, que só recebeu um link.
+
+     É o certo enquanto o relay está sendo consertado. Não é o certo para
+     ficar assim.
+`);
+  }
+
   if (CONF.video.ativo && !CONF.video.turn.length) {
     console.warn(`
   ⚠  VÍDEO LIGADO SEM TURN

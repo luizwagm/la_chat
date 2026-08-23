@@ -59,7 +59,8 @@ const crypto = require("node:crypto");
    ========================================================================== */
 const TTL_PADRAO = 2 * 3600;
 
-function criarTurn({ urls = [], segredo = "", stun = [], ttlSegundos = TTL_PADRAO, soRelay = false } = {}) {
+function criarTurn({ urls = [], segredo = "", stun = [], ttlSegundos = TTL_PADRAO,
+                     soRelay = false, salaRelay = true } = {}) {
   const temTurn = !!(urls.length && segredo);
 
   if (urls.length && !segredo) {
@@ -129,7 +130,10 @@ function criarTurn({ urls = [], segredo = "", stun = [], ttlSegundos = TTL_PADRA
            deixa a chamada mais privada: deixa a chamada IMPOSSÍVEL, porque o
            navegador descarta todo candidato que não seja de relay e não sobra
            nenhum. Falharia em silêncio, com cara de problema de rede. */
-        iceTransportPolicy: (soRelay || aberta) && temTurn ? "relay" : "all",
+        /* `salaRelay` é a válvula: desligada, a reunião por link volta a
+           tentar o caminho direto. Custa a privacidade do IP e devolve a
+           reunião a quem está com o relay quebrado — ver config.js. */
+        iceTransportPolicy: (soRelay || (aberta && salaRelay)) && temTurn ? "relay" : "all",
         expiraEm: temTurn ? Date.now() + ttlSegundos * 1000 : 0,
       };
     },

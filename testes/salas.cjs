@@ -22,6 +22,11 @@ const { criarPlacar, subirChat, entrar, criarAba, pedir, espera } = require("./a
 const VIDEO = {
   CHAT_VIDEO: "1", CHAT_VIDEO_TETO: "4",
   CHAT_TURN: "turn:relay.zzqa:3478", CHAT_TURN_SEGREDO: "zz-qa-segredo-de-teste",
+  /* O teto de entradas por IP sobe SÓ na suíte: todos os casos saem do mesmo
+     127.0.0.1, e a partir de certa quantidade eles esbarram num limite que
+     existe para barrar varredura de códigos, não teste. O freio de `/info`
+     continua no padrão — é ele que o teste de adivinhação exercita. */
+  CHAT_SALA_FREIO_ENTRAR: "500",
 };
 
 /* Uma "aba de navegador" de convidado: guarda os cookies dele e devolve o
@@ -71,6 +76,18 @@ async function rodar() {
       corpo: { titulo: "ZZ QA Reunião externa", duracaoMin: 30, validadeH: 2, maxConvidados: 2 },
     });
     P.eq(criada.status, 200, "o anfitrião cria a sala");
+
+    /* ==================================================================
+       SÓ ADMINISTRADOR CRIA LINK
+
+       Todo funcionário pode LIGAR para um colega — é conversa entre quem já
+       está dentro. Criar um link é abrir uma porta que responde a quem não
+       tem credencial nenhuma, com a banda e o nome da empresa atrás dela.
+       Essa decisão pertence a quem responde pelo sistema.
+       ================================================================== */
+    P.recusa(await bruno.vai("/salas", {
+      metodo: "POST", corpo: { titulo: "ZZ QA Do Bruno", duracaoMin: 30 },
+    }), 403, "funcionário comum NÃO cria link de reunião");
 
     const sala = criada.dados;
     P.eq(String(sala.codigo || "").length, 11, "o código tem 11 caracteres", sala.codigo);
@@ -491,6 +508,122 @@ async function rodar() {
        Estes casos viajam no tempo mexendo em `encerra_em` direto no banco,
        que é o que permite provar em segundos o que levaria meia hora.
        ====================================================================== */
+    /* ======================================================================
+       RECARREGAR NÃO É ENTRAR DE NOVO
+
+       No celular a recarga acontece o tempo todo: girar a tela, trocar de
+       aplicativo, o navegador descartar a aba em segundo plano. Cada uma
+       delas voltava à tela de nome — e entrar de novo criava um convidado
+       NOVO, com id novo, gastando mais uma vaga do teto.
+
+       Uma sala de cinco lugares se esgotava com UMA pessoa e quatro recargas,
+       e o anfitrião via cinco desconhecidos com o mesmo nome.
+       ====================================================================== */
+    P.secao("o convidado que recarrega a página");
+
+    {
+      const criadaR = await ana.vai("/salas", {
+        metodo: "POST", corpo: { titulo: "ZZ QA Recarga", duracaoMin: 30, maxConvidados: 2 },
+      });
+      const salaR = criadaR.dados;
+      await ana.vai(`/salas/${salaR.id}/abrir`, { metodo: "POST" });
+
+      const aba = abaDeConvidado(chat.base);
+      const entrou1 = await aba.vai(`/call/${salaR.codigo}/entrar`, {
+        metodo: "POST", corpo: { nome: "ZZ QA Recarrega" },
+      });
+      P.eq(entrou1.status, 200, "o convidado entra");
+      const idPrimeiro = entrou1.dados.eu.id;
+
+      /* A RECARGA: mesma aba, mesmo cookie, sem digitar nome nenhum. */
+      const retomou = await aba.vai(`/call/${salaR.codigo}/eu`);
+      P.eq(retomou.status, 200, "e ao recarregar, retoma sem pedir o nome de novo");
+      P.eq(retomou.dados?.eu?.id, idPrimeiro,
+        "é a MESMA pessoa — não um convidado novo");
+      P.eq(retomou.dados?.eu?.nome, "ZZ QA Recarrega", "com o nome que ela digitou");
+      P.ok(!!retomou.dados?.chamada?.id, "e já volta para dentro da chamada");
+
+      /* A VAGA NÃO VAZA. Este é o teste que importa: com o teto em 2, três
+         recargas seguidas não podem consumir a sala. */
+      for (let i = 0; i < 3; i++) await aba.vai(`/call/${salaR.codigo}/eu`);
+      const vagas = await ana.vai(`/salas/${salaR.id}/participantes`);
+      const dentro = (vagas.dados?.convidados || []).filter((c) => !c.saiuEm && !c.expulso);
+      P.eq(dentro.length, 1, "e quatro recargas continuam sendo UMA pessoa na sala",
+        JSON.stringify(dentro.map((c) => c.nome)));
+
+      const outro = abaDeConvidado(chat.base);
+      P.eq((await outro.vai(`/call/${salaR.codigo}/entrar`, {
+        metodo: "POST", corpo: { nome: "ZZ QA Segundo" },
+      })).status, 200, "a segunda vaga continua disponível");
+
+      /* Sem cookie não se retoma nada — é sessão, não é o código do link. */
+      const semCookie = abaDeConvidado(chat.base);
+      P.recusa(await semCookie.vai(`/call/${salaR.codigo}/eu`), 401,
+        "quem não tem sessão NÃO retoma (o link sozinho não basta)");
+
+      /* Nem o removido. */
+      await ana.vai(`/salas/${salaR.id}/remover/${idPrimeiro}`, { metodo: "POST" });
+      const depoisDeRemovido = await aba.vai(`/call/${salaR.codigo}/eu`);
+      P.ok(depoisDeRemovido.status >= 400,
+        "e quem foi REMOVIDO não volta recarregando", String(depoisDeRemovido.status));
+    }
+
+    /* ======================================================================
+       O ANFITRIÃO VOLTA PARA A PRÓPRIA SALA
+
+       `estado = 'ativa'` diz que a sala foi ABERTA, não que há reunião
+       acontecendo. Quando o anfitrião sai e era o último, a CHAMADA encerra e
+       a SALA continua ativa, apontando para ela.
+
+       A tela oferecia "Entrar", que levava à chamada morta e respondia "Esta
+       chamada já terminou" — o dono trancado do lado de fora da própria
+       reunião, com o link já distribuído.
+       ====================================================================== */
+    P.secao("o anfitrião sai e volta");
+
+    {
+      const criadaV = await ana.vai("/salas", {
+        metodo: "POST", corpo: { titulo: "ZZ QA Volta", duracaoMin: 30 },
+      });
+      const salaV = criadaV.dados;
+
+      const abriu = await ana.vai(`/salas/${salaV.id}/abrir`, { metodo: "POST" });
+      P.eq(abriu.status, 200, "o anfitrião abre a sala");
+      const chamada1 = abriu.dados.chamada?.id;
+
+      const lista1 = await ana.vai("/salas");
+      const naLista1 = (lista1.dados?.salas || []).find((x) => x.id === salaV.id);
+      P.eq(naLista1?.chamadaViva, true, "e a lista diz que a chamada está VIVA");
+
+      await ana.vai(`/chamadas/${chamada1}/sair`, { metodo: "POST" });
+
+      const lista2 = await ana.vai("/salas");
+      const naLista2 = (lista2.dados?.salas || []).find((x) => x.id === salaV.id);
+      P.eq(naLista2?.estado, "ativa", "saindo, a SALA continua ativa");
+      P.eq(naLista2?.chamadaViva, false,
+        "mas a lista já diz que NÃO há chamada viva — é o que muda o botão na tela");
+
+      /* Entrar na chamada morta continua sendo recusado, e deve ser: ela
+         acabou mesmo. O que não pode é ser o único caminho oferecido. */
+      const naMorta = await ana.vai(`/chamadas/${chamada1}/entrar`, { metodo: "POST" });
+      P.ok(naMorta.status >= 400, "a chamada encerrada não recebe ninguém", String(naMorta.status));
+
+      const reabriu = await ana.vai(`/salas/${salaV.id}/abrir`, { metodo: "POST" });
+      P.eq(reabriu.status, 200, "e o anfitrião REABRE a sala");
+      P.ok(reabriu.dados.chamada?.id && reabriu.dados.chamada.id !== chamada1,
+        "numa chamada nova", reabriu.dados.chamada?.id);
+      P.eq(reabriu.dados.encerraEm, abriu.dados.encerraEm,
+        "com o MESMO prazo — reabrir não estica a reunião");
+
+      /* E o link continua o mesmo: é ele que já foi distribuído. */
+      P.eq(reabriu.dados.codigo, salaV.codigo, "e o mesmo link, que já está com as pessoas");
+
+      const convidadoTardio = abaDeConvidado(chat.base);
+      P.eq((await convidadoTardio.vai(`/call/${salaV.codigo}/entrar`, {
+        metodo: "POST", corpo: { nome: "ZZ QA Tardio" },
+      })).status, 200, "e quem tinha o link entra na reunião reaberta");
+    }
+
     P.secao("acabado o tempo, a reunião não volta");
 
     {

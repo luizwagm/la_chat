@@ -467,6 +467,31 @@
         }
       };
 
+      /* ====================================================================
+         POR QUE NÃO CONECTOU
+
+         "conectando…" para sempre é o pior diagnóstico possível: não diz se o
+         problema é a rede da pessoa, o servidor de relay ou a credencial dele.
+         E, do lado de fora, os três são indistinguíveis.
+
+         O navegador SABE a resposta e a entrega aqui. Os códigos que importam:
+
+           401/403  o relay recusou a credencial — o segredo do chat não bate
+                    com o `static-auth-secret` do coturn;
+           701      não deu para falar com o servidor de relay (porta fechada,
+                    endereço errado, serviço fora do ar).
+
+         Traduzir isso numa frase economiza a investigação inteira.
+         ==================================================================== */
+      pc.onicecandidateerror = (e) => {
+        const cod = Number(e?.errorCode || 0);
+        if (!cod || cod === 600) return;   // 600 = "não há mais candidatos", normal
+        let frase = "";
+        if (cod === 401 || cod === 403) frase = "O servidor de relay recusou a credencial.";
+        else if (cod === 701) frase = "Não foi possível falar com o servidor de relay.";
+        if (frase) aoErro(Object.assign(new Error(frase), { codigoIce: cod, url: e?.url }));
+      };
+
       pc.oniceconnectionstatechange = () => {
         /* `failed` é diferente de `disconnected`: o segundo costuma se
            recuperar sozinho em segundos (troca de rede, wifi oscilando). Só o
@@ -831,6 +856,13 @@
         aoMudar: () => this.agendarPintura(),
         aoErro: (e) => {
           if (window.CHAT_DEBUG) console.warn("webrtc:", e?.message || e);
+          /* Erro de ICE com diagnóstico vai para a TELA. O resto continua no
+             console: ruído de negociação não interessa a quem está reunido. */
+          if (e?.codigoIce) {
+            this.avisoDeVideo(e.message + " Avise quem cuida do servidor.");
+            clearTimeout(this._avisoIce);
+            this._avisoIce = setTimeout(() => this.avisoDeVideo(""), 20000);
+          }
         },
       });
       v.malha.servidores(dados.credenciais);
@@ -1683,6 +1715,21 @@
     if (el.modo === "sala" || !el.el?.abas) return;
     if (el.el.abas.querySelector('[data-aba="reunioes"]')) return;
 
+    /* ==================================================================
+       A ABA SÓ EXISTE PARA QUEM PODE CRIAR
+
+       O servidor recusa a criação a quem não é administrador — essa é a
+       tranca de verdade. Aqui é sobre não oferecer: uma aba que só sabe
+       dizer "você não pode" ocupa espaço na barra e ensina a ignorar o
+       menu.
+
+       `estado.eu` pode ainda não ter chegado quando o componente monta.
+       Por isso a aba é acrescentada TAMBÉM ao fim de `iniciar()`, quando a
+       identidade já se conhece — e esta função sai na hora se já tiver
+       feito o serviço. */
+    if (el.estado?.eu && el.estado.eu.papel !== "admin") return;
+    if (!el.estado?.eu) { el.__reunioes = false; return; }
+
     const b = criar("button", {
       classe: "aba", role: "tab", "aria-selected": "false", texto: "Reuniões",
       onclick: () => el.trocarAba("reunioes"),
@@ -1701,6 +1748,18 @@
   for (const el of document.querySelectorAll("la-chat")) {
     if (el.el) { try { vestirDeReunioes(el); } catch { } }
   }
+
+  /* A IDENTIDADE CHEGA DEPOIS DA MONTAGEM.
+
+     `montar()` desenha a barra antes de o `/eu` responder, então na primeira
+     passagem não se sabe se a pessoa é administradora. `vestirDeReunioes` sai
+     sem fazer nada nesse caso, e é chamada de novo aqui, quando já se sabe. */
+  const iniciarComReunioes = LaChat.prototype.iniciar;
+  LaChat.prototype.iniciar = async function () {
+    const r = await iniciarComReunioes.call(this);
+    try { vestirDeReunioes(this); } catch { }
+    return r;
+  };
 
   const trocarComReunioes = LaChat.prototype.trocarAba;
   LaChat.prototype.trocarAba = async function (aba) {
@@ -1792,7 +1851,12 @@
        ENCERRADA (por tempo) ou REVOGADA continuava exibindo "Abrir sala".
        O botão levaria a uma recusa do servidor, que é o pior tipo de botão:
        o que promete e o sistema desmente. */
-    const podeAbrir = s.estado === "aberta";
+    /* `ativa` diz que a sala foi ABERTA, não que há reunião acontecendo.
+       Quando o anfitrião sai e era o último, a chamada encerra e a sala
+       continua ativa — e a versão anterior oferecia "Entrar" para uma chamada
+       morta, que respondia "Esta chamada já terminou". O dono ficava trancado
+       do lado de fora da própria reunião, com o link já distribuído. */
+    const podeAbrir = s.estado === "aberta" || (s.estado === "ativa" && !s.chamadaViva);
     const morta = s.estado === "encerrada" || s.estado === "revogada";
 
     /* O link num <code>, e não num <input>: ele não é editável, e um campo
@@ -1832,12 +1896,13 @@
        que deixa entrar sozinho é uma sala onde estranhos se encontram sem
        ninguém da casa. */
     if (podeAbrir) {
-      const abrir = criar("button", { classe: "forte", type: "button", texto: "Abrir sala" });
+      const abrir = criar("button", { classe: "forte", type: "button",
+        texto: s.estado === "ativa" ? "Reabrir sala" : "Abrir sala" });
       abrir.onclick = async () => {
         abrir.disabled = true;
         try {
           const r = await this.api("/salas/" + s.id + "/abrir", { metodo: "POST" });
-          this.sala = { id: s.id, titulo: s.titulo, encerraEm: r.encerraEm || null };
+          this.sala = { id: s.id, titulo: s.titulo, link: s.link, encerraEm: r.encerraEm || null };
           await this.montarChamada(r.chamada || r);
           this.carregarSalas();
         } catch (e) {
@@ -1846,12 +1911,12 @@
         }
       };
       acoes.push(abrir);
-    } else if (viva) {
+    } else if (viva && s.chamadaViva) {
       const voltar = criar("button", { classe: "forte", type: "button", texto: "Entrar" });
       voltar.onclick = async () => {
         try {
           const r = await this.api("/chamadas/" + s.chamadaId + "/entrar", { metodo: "POST" });
-          this.sala = { id: s.id, titulo: s.titulo, encerraEm: s.encerraEm || null };
+          this.sala = { id: s.id, titulo: s.titulo, link: s.link, encerraEm: s.encerraEm || null };
           await this.montarChamada(r);
         } catch (e) { this.mostrarFaixa(e.message, true); }
       };
@@ -1990,6 +2055,38 @@
         onclick: () => this.fecharJanelaDaReuniao(),
       }));
       return caixa;
+    }
+
+    /* O LINK, DENTRO DA REUNIÃO.
+
+       Ele vive na aba "Reuniões", e a reunião cobre a tela inteira — então,
+       no momento em que o anfitrião mais precisa dele (alguém pede o convite
+       no meio da conversa), era preciso sair da reunião para buscá-lo.
+
+       Só aparece quando esta chamada É de uma sala por link: numa chamada
+       interna não há link nenhum a compartilhar. */
+    if (this.sala?.link) {
+      const copiar = criar("button", {
+        type: "button", texto: "🔗 Link",
+        "aria-label": "Copiar o link do convite",
+        title: "Copiar o link do convite",
+        onclick: async () => {
+          const antes = copiar.textContent;
+          try {
+            await navigator.clipboard.writeText(this.sala.link);
+            copiar.textContent = "Copiado!";
+          } catch {
+            /* Sem área de transferência (acontece fora de HTTPS): mostrar o
+               endereço é melhor que uma falha silenciosa — dá para ler e
+               digitar, ou copiar à mão. */
+            this.avisoDeVideo(this.sala.link);
+            setTimeout(() => this.avisoDeVideo(""), 15000);
+            copiar.textContent = "Veja acima";
+          }
+          setTimeout(() => { copiar.textContent = antes; }, 2500);
+        },
+      });
+      caixa.appendChild(copiar);
     }
 
     if (TEM_JANELA) {

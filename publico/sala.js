@@ -300,12 +300,40 @@
      */
 
   /* ==========================================================================
+     RETOMAR — recarregar não é entrar de novo
+
+     No celular isto acontece o tempo todo: a pessoa gira a tela, troca de
+     aplicativo, o navegador descarta a aba em segundo plano. Antes, cada
+     recarga voltava à tela de nome — e entrar de novo criava um convidado
+     NOVO, com id novo, gastando mais uma vaga do teto. Uma sala de cinco
+     lugares se esgotava com uma pessoa e quatro recargas.
+
+     O cookie do convidado vale 4 horas justamente para isto. Se ele ainda
+     valer, a pessoa volta direto para a reunião, sem digitar nada.
+     ========================================================================== */
+  async function retomar() {
+    try {
+      const r = await pedir("/call/" + encodeURIComponent(codigo) + "/eu");
+      if (!r?.eu?.id) return false;
+      await entrarNaReuniao(r);
+      return true;
+    } catch {
+      /* Qualquer recusa — cookie vencido, removido da sala, reunião encerrada
+         — cai no caminho normal, que dirá o motivo certo. Insistir aqui só
+         atrasaria a mensagem. */
+      return false;
+    }
+  }
+
+  /* ==========================================================================
      COMEÇO
      ========================================================================== */
-  if (!/^[1-9A-HJ-NP-Za-km-z]{11}$/.test(codigo)) {
-    dizer("recusa-msg", "Link inválido ou expirado.");
-    mostrar("tela-recusa");
-  } else {
+  (async () => {
+    if (!/^[1-9A-HJ-NP-Za-km-z]{11}$/.test(codigo)) {
+      dizer("recusa-msg", "Link inválido ou expirado.");
+      return mostrar("tela-recusa");
+    }
+    if (await retomar()) return;
     conferir();
-  }
+  })();
 })();

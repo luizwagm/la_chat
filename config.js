@@ -281,6 +281,44 @@ const CONF = {
        instala — ver a nota de exposição de IP em docs/VIDEO.md. */
     soRelay: bool(process.env.CHAT_VIDEO_SO_RELAY, false),
 
+    /* ======================================================================
+       O RELAY OBRIGATÓRIO DA SALA POR LINK — e a válvula que ele precisava
+
+       Toda reunião nascida de um `/call/<codigo>` usa `relay`, para que o
+       convidado de fora não descubra o IP de quem está dentro (e vice-versa).
+       É a decisão certa de privacidade, e continua sendo o padrão.
+
+       Mas ela tem um custo que só aparece com o relay QUEBRADO: pedir
+       `relay` faz o navegador descartar todo candidato que não seja de relay,
+       e sem relay utilizável não sobra nenhum. A reunião por link fica
+       IMPOSSÍVEL — enquanto a chamada interna, que usa `all`, continua
+       funcionando perfeitamente.
+
+       O sintoma engana: "o chat funciona, só o link não". Leva a procurar
+       defeito na sala, e o defeito está no coturn — credencial recusada,
+       porta fechada, serviço fora do ar.
+
+       Esta chave existe para desatar esse nó enquanto o relay é consertado.
+       Desligá-la NÃO é neutro: os participantes voltam a ver o IP uns dos
+       outros, inclusive o estranho que recebeu o convite. É troca consciente,
+       e por isso ela tem nome longo e padrão seguro.
+       ====================================================================== */
+    salaRelay: bool(process.env.CHAT_VIDEO_SALA_RELAY, true),
+
+    /* ======================================================================
+       O FREIO DE ENTRADA NA SALA — por IP, e apertado de propósito
+
+       \`/call/<codigo>/entrar\` é a rota mais exposta do sistema: responde a
+       quem não tem credencial nenhuma. Dez por minuto por endereço é folgado
+       para gente entrando numa reunião e apertado para quem varre códigos.
+
+       Configurável porque a SUÍTE precisa subir o teto: todos os testes saem
+       do mesmo 127.0.0.1, e a partir de certa quantidade de casos eles passam
+       a esbarrar num limite que existe para outra coisa — o resultado é um
+       teste vermelho que não denuncia defeito nenhum.
+       ====================================================================== */
+    freioEntrar: num(process.env.CHAT_SALA_FREIO_ENTRAR, 10),
+
     /* Compartilhar tela. Separado do vídeo porque há cliente que quer reunião
        com câmera e NÃO quer que a tela do sistema de gestão possa ser
        compartilhada por engano. */

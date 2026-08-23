@@ -253,6 +253,15 @@ function criarRotas({ servico, chamadas, salas, sessoes, convidados, conf, porte
       if (metodo === "GET" && p[2] === "info" && p.length === 3)
         return responder(res, 200, await salas.info(codigo, { ip: req.ipReal }), cors);
 
+      /* RETOMAR. Lê o cookie do convidado e devolve a identidade que já
+         existe — é o que faz recarregar a página no celular não virar uma
+         pessoa nova, com nome pedido de novo e mais uma vaga gasta. */
+      if (metodo === "GET" && p[2] === "eu" && p.length === 3) {
+        const cvd = convidados.de(req);
+        if (!cvd) return responder(res, 401, { erro: "Sem sessão." }, cors);
+        return responder(res, 200, await salas.retomar(cvd, codigo), cors);
+      }
+
       if (metodo === "POST" && p[2] === "entrar" && p.length === 3) {
         const c = await lerJson(req, 4 * 1024);
         const r = await salas.entrar({

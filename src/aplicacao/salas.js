@@ -63,6 +63,25 @@ function criarServicoDeSalas({ repos, conf, barramento, limites, convidados,
       exigirVideoLigado();
       if (sessao.ehConvidado) throw erros.semPermissao();
 
+      /* ==================================================================
+         SÓ ADMINISTRADOR CRIA REUNIÃO POR LINK
+
+         Todo funcionário pode LIGAR para um colega — é conversa entre quem
+         já está dentro. Criar um link é outra coisa: é abrir uma porta que
+         responde a quem não tem credencial nenhuma, com a banda e o nome da
+         empresa atrás dela.
+
+         Essa decisão não pertence a cada pessoa. Pertence a quem responde
+         pelo sistema — e é a única rota deste chat que precisa desse
+         degrau, justamente porque é a única que fabrica acesso externo.
+
+         REVOGAR e REMOVER continuam abertos a quem CRIOU a sala (ver
+         `revogar` e `expulsar`): tirar gente de uma reunião não pode
+         depender de achar um administrador.
+         ================================================================== */
+      if (!sessao.ehAdmin)
+        throw erros.semPermissao("Só um administrador pode criar link de reunião.");
+
       /* Criar sala é barato para quem cria e caro para o servidor: cada uma é
          uma porta pública a mais. */
       const freio = limites.conferir(`sala:${sessao.usuarioId}`, { maximo: 20, janelaMs: 3600e3 });
@@ -129,10 +148,32 @@ function criarServicoDeSalas({ repos, conf, barramento, limites, convidados,
       };
     },
 
+    /* ======================================================================
+       A LISTA DO ANFITRIÃO — com o estado REAL da chamada
+
+       `estado = 'ativa'` diz que a sala foi aberta, e não que há reunião
+       acontecendo agora. Quando o anfitrião sai e era o último, a CHAMADA
+       encerra e a SALA continua ativa, apontando para ela.
+
+       Sem distinguir os dois, a tela oferecia "Entrar" — que levava à chamada
+       morta e respondia "Esta chamada já terminou". O anfitrião ficava
+       trancado do lado de fora da própria reunião, com o link já distribuído.
+       ====================================================================== */
     async minhas(sessao) {
       if (sessao.ehConvidado) throw erros.semPermissao();
       const linhas = await repos.salas.doUsuario(sessao.contextoId, sessao.usuarioId);
-      return linhas.map((s) => servico.paraODono(s, s.codigo));
+      return Promise.all(linhas.map(async (s) => ({
+        ...servico.paraODono(s, s.codigo),
+        chamadaViva: await servico.chamadaViva(s),
+      })));
+    },
+
+    /* Uma consulta por sala VIVA apenas. Salas paradas não têm chamada para
+       conferir, e perguntar por elas seria trabalho para responder `false`. */
+    async chamadaViva(sala) {
+      if (!sala?.chamada_id || sala.estado !== "ativa") return false;
+      const c = await repos.chamadas.porIdCru(sala.chamada_id);
+      return !!c && c.estado !== "encerrada";
     },
 
     async revogar(sessao, salaId) {
@@ -257,7 +298,7 @@ function criarServicoDeSalas({ repos, conf, barramento, limites, convidados,
 
       const ipHash = ipEmHash(ip);
       const freio = limites.conferir(`sala:entrar:${ipHash || "sem-ip"}`,
-        { maximo: 10, janelaMs: 60e3 });
+        { maximo: V.freioEntrar || 10, janelaMs: 60e3 });
       if (!freio.ok) throw erros.demais(freio.esperar, "Muitas tentativas. Aguarde um instante.");
 
       const n = dom.validarNome(nome);
@@ -318,6 +359,63 @@ function criarServicoDeSalas({ repos, conf, barramento, limites, convidados,
       return {
         cookies: cookie.cookies,
         eu: { id: usuario.id, nome: n.nome, convidado: true },
+        sala: {
+          id: sala.id,
+          titulo: repos.salas.tituloDe(sala),
+          encerraEm: sala.encerra_em ? Number(sala.encerra_em) : null,
+          duracaoMin: Number(sala.duracao_min),
+        },
+        chamada: dados,
+      };
+    },
+
+    /* ======================================================================
+       RETOMAR — recarregar a página não é entrar de novo
+
+       No celular, recarregar acontece o tempo todo: a pessoa gira a tela,
+       troca de aplicativo, o navegador descarta a aba em segundo plano. Antes
+       disto, cada recarga voltava à tela de nome — e, pior, ENTRAR de novo
+       criava um convidado NOVO, com id novo, gastando mais uma vaga do teto.
+       Uma sala de 5 lugares se esgotava com uma pessoa e quatro recargas.
+
+       O cookie do convidado vale 4 horas justamente para isto. Aqui ele é
+       usado para RETOMAR a identidade que já existe, em vez de fabricar outra.
+
+       As mesmas recusas continuam valendo: sala revogada, encerrada, tempo
+       esgotado ou convidado expulso não retomam nada.
+       ====================================================================== */
+    async retomar(sessao, codigo) {
+      exigirVideoLigado();
+      if (!sessao?.ehConvidado) throw erros.naoAutenticado();
+
+      const sala = await repos.salas.porCodigo(codigo);
+      if (!sala) throw erros.naoEncontrado(dom.RECUSAS.inexistente);
+
+      /* O cookie precisa ser DESTA sala. Sem esta linha, quem tivesse entrado
+         numa reunião retomaria a sessão dentro de outra, com o código dela. */
+      if (sessao.salaId !== sala.id) throw erros.semPermissao();
+
+      if (await repos.salas.foiExpulso(sala.id, sessao.usuarioId))
+        throw erros.semPermissao("Você foi removido desta reunião.");
+
+      const podem = dom.podeEntrar(sala, {
+        anfitriaoPresente: await anfitriaoPresente(sala),
+        /* Quem retoma já ocupa a própria vaga — contá-la de novo faria a
+           última pessoa da sala perder o lugar ao recarregar. */
+        convidadosDentro: 0,
+      });
+      if (!podem.ok) throw erros.invalido(dom.RECUSAS[podem.motivo] || dom.RECUSAS.inexistente);
+      if (!sala.chamada_id) throw erros.invalido(dom.RECUSAS.sem_anfitriao);
+
+      /* A conversa e a chamada podem ter mudado (o anfitrião reabriu a sala
+         enquanto a pessoa estava fora). Garantir de novo é barato e evita o
+         caso em que ela retoma para uma chamada que já não é a da sala. */
+      await repos.conversas.garantirMembro(sala.conversa_id, sessao.usuarioId);
+      await repos.chamadas.acrescentarParticipante(sala.chamada_id, sessao.usuarioId);
+      const dados = await chamadas.entrar(sessao, sala.chamada_id);
+
+      return {
+        eu: { id: sessao.usuarioId, nome: sessao.nome, convidado: true },
         sala: {
           id: sala.id,
           titulo: repos.salas.tituloDe(sala),

@@ -5,6 +5,69 @@ recurso, 3ª para correção. Nenhuma casa para no 9.
 
 ---
 
+## 0.14.0 — 23/08/2026 · a reunião por link, usada de verdade
+
+Quatro problemas relatados por quem estava usando, e a causa do quinto.
+
+### "Saí da reunião e não consigo voltar"
+
+`estado = 'ativa'` diz que a sala foi **aberta**, não que há reunião
+acontecendo. Quando o anfitrião sai e era o último, a CHAMADA encerra e a SALA
+continua ativa, apontando para ela — e a tela oferecia "Entrar", que levava à
+chamada morta e respondia *"Esta chamada já terminou"*.
+
+**O dono ficava trancado do lado de fora da própria reunião, com o link já
+distribuído.** A lista passou a informar `chamadaViva`, e o botão vira "Reabrir
+sala". O prazo não muda: reabrir não estica a reunião.
+
+### "Recarreguei no celular e ele pediu o nome de novo"
+
+Pior que o incômodo: entrar de novo criava um convidado **novo**, com id novo,
+gastando mais uma vaga do teto. Uma sala de cinco lugares se esgotava com uma
+pessoa e quatro recargas — e o anfitrião via cinco desconhecidos com o mesmo
+nome.
+
+O cookie do convidado vale 4 h justamente para isto. `GET /call/<codigo>/eu`
+retoma a identidade que já existe. Sem cookie não se retoma nada (o link
+sozinho não basta), e quem foi removido não volta recarregando.
+
+### "Preciso do link durante a reunião"
+
+Ele vivia só na aba "Reuniões", e a reunião cobre a tela — então, no momento em
+que o anfitrião mais precisa dele, era preciso sair para buscá-lo. Agora há um
+botão **🔗 Link** no topo da reunião, e só quando a chamada é de uma sala.
+
+### A causa do "conectando…" — e ela é nossa
+
+O relato que resolveu: **"entre funcionários funciona, só o link não"**.
+
+Chamada interna usa `iceTransportPolicy: "all"`; reunião por link usa `relay`
+desde a 0.12.0, para o convidado não descobrir o IP de quem está dentro. Com o
+relay **quebrado**, o navegador descarta todo candidato que não seja de relay e
+não sobra nenhum: a interna conecta, a do link nunca.
+
+O sintoma engana — "o chat funciona, só o link não" manda procurar defeito na
+sala, e o defeito está no coturn.
+
+Duas respostas. **`CHAT_VIDEO_SALA_RELAY=0`** desata o nó enquanto o relay é
+consertado (não é neutro: os IPs voltam a ser visíveis, e o serviço avisa isso
+na subida). E o cliente passou a **traduzir o erro de ICE**: código 401/403 vira
+*"O servidor de relay recusou a credencial"*; 701 vira *"Não foi possível falar
+com o servidor de relay"*. O navegador sempre soube a resposta; ela só não
+estava chegando à tela.
+
+### Também
+
+O freio de entrada na sala virou configurável (`CHAT_SALA_FREIO_ENTRAR`, padrão
+10/min por IP). A suíte precisou: todos os casos saem do mesmo 127.0.0.1, e a
+partir de certa quantidade passaram a esbarrar num limite que existe para barrar
+varredura de códigos — um teste vermelho que não denunciava defeito nenhum.
+
+**20 casos novos** para a retomada e a volta do anfitrião, incluindo o que prova
+que quatro recargas continuam sendo uma pessoa na sala.
+
+---
+
 ## 0.13.5 — 23/08/2026 · o script que mandava apontar o DNS para o Docker
 
 Três defeitos do `criar-relay.sh`, todos vindos de um uso real.
