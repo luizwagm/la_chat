@@ -318,14 +318,50 @@ else
   esac
 fi
 
-if [ "$VIDEO_CONF" = "1" ]; then
-  if grep -q '^CHAT_TURN=' "$AMBIENTE_ARQ" 2>/dev/null; then
-    verde "vídeo ligado, com TURN configurado"
-  else
-    amarelo "vídeo ligado SEM TURN — de 15% a 20% das chamadas vão falhar"
-  fi
-else
+TURN_CONF="$(valor_de CHAT_TURN)"
+
+# ==========================================================================
+#  O RELAY ÓRFÃO — coturn no ar, e a instância sem saber
+#
+#  A instalação tem DUAS partes, e a segunda é fácil de esquecer porque a
+#  primeira termina com tudo parecendo pronto: o coturn sobe, escuta na 3478,
+#  `systemctl is-active` responde `active`. Falta ligar o vídeo na instância,
+#  que é outro arquivo.
+#
+#  O sintoma disso NÃO se parece com configuração faltando. Se parece com
+#  defeito de rede: a reunião abre, as pessoas aparecem, e todos os retratos
+#  ficam eternamente em "conectando…", porque cada navegador está tentando
+#  conexão direta com um STUN público e nada mais.
+#
+#  Perguntar "há um coturn nesta máquina?" custa um `ss` e transforma meia
+#  hora de investigação de rede numa linha de configuração.
+# ==========================================================================
+COTURN_NO_AR=0
+if ss -lnu 2>/dev/null | grep -q ':3478 '; then COTURN_NO_AR=1; fi
+
+if [ "$VIDEO_CONF" != "1" ]; then
   verde "vídeo desligado nesta instância (reunião por link indisponível)"
+elif [ -n "$TURN_CONF" ]; then
+  verde "vídeo ligado, com TURN configurado"
+  [ "$COTURN_NO_AR" = "1" ] && verde "e há um relay escutando na 3478" \
+    || amarelo "mas NADA escuta na 3478 desta máquina — o relay está fora do ar?"
+  if [ -z "$(valor_de CHAT_TURN_SEGREDO)" ]; then
+    vermelho "CHAT_TURN sem CHAT_TURN_SEGREDO — o coturn vai RECUSAR as credenciais"
+    echo "        os dois têm de existir, e o segredo tem de bater com o static-auth-secret"
+  fi
+elif [ "$COTURN_NO_AR" = "1" ]; then
+  vermelho "HÁ UM COTURN NO AR nesta máquina, e esta instância não o conhece"
+  echo "        o vídeo está ligado, CHAT_TURN está vazio, e o resultado na tela"
+  echo "        é todo mundo preso em \"conectando…\" — parece falha de rede."
+  echo ""
+  echo "        Falta a segunda parte da instalação:"
+  echo "          sudo cat /etc/lachat-relay.env      # os valores estão aqui"
+  echo "          sudo nano $AMBIENTE_ARQ             # CHAT_TURN, CHAT_TURN_SEGREDO, CHAT_STUN"
+  echo "          sudo systemctl restart $SERVICO"
+else
+  amarelo "vídeo ligado SEM TURN — de 15% a 20% das chamadas vão falhar"
+  echo "        e mais que isso entre celulares em rede móvel, onde o CGNAT"
+  echo "        impede a conexão direta. Instale o relay: ./criar-relay.sh"
 fi
 
 # ==========================================================================

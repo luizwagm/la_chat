@@ -126,6 +126,28 @@ async function rodar() {
     P.ok(!!aviso, "Ana é avisada de que alguém entrou");
     P.eq(aviso?.u, bruno.usuario.id, "e de quem foi");
 
+    /* ==================================================================
+       O NOME VAI NO AVISO — e a falta dele apagava o de TODO MUNDO.
+
+       Esta lista é gravada por cima da que o cliente já tinha. Sem `nome`,
+       a primeira pessoa a entrar fazia todos os retratos da reunião
+       perderem a identificação de uma vez: quadros escritos "…", inclusive
+       os de quem já estava lá havia meia hora com o nome certo na tela.
+
+       Passou meses despercebido porque a suíte conferia QUEM entrou (`u`) e
+       nunca o conteúdo da lista — e porque, com duas pessoas em teste, um
+       "…" a mais não chama atenção. Na tela do cliente, com quatro, chama.
+       ================================================================== */
+    const naLista = (aviso?.participantes || []).find((p) => p.id === bruno.usuario.id);
+    P.ok(!!naLista, "e a lista do aviso traz quem entrou");
+    P.ok(!!naLista?.nome, "COM O NOME — sem ele, o cliente apaga o nome de todos",
+      JSON.stringify(naLista));
+    P.ok(naLista?.nome?.includes("Bruno"), "e é o nome certo", naLista?.nome);
+    P.ok("avatar" in (naLista || {}), "e o avatar vai junto, pelo mesmo motivo");
+
+    const jaEstava = (aviso?.participantes || []).find((p) => p.id !== bruno.usuario.id);
+    P.ok(!!jaEstava?.nome, "quem JÁ ESTAVA dentro também vem nomeado", JSON.stringify(jaEstava));
+
     /* Entrar duas vezes é idempotente — acontece quando a aba recarrega. */
     const denovo = await bruno.vai(`/chamadas/${chamadaId}/entrar`, { metodo: "POST" });
     P.eq(denovo.status, 200, "entrar de novo não é erro");

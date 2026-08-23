@@ -5,6 +5,79 @@ recurso, 3ª para correção. Nenhuma casa para no 9.
 
 ---
 
+## 0.13.3 — 23/08/2026 · o relay órfão
+
+O `verificar.sh` passou a notar o caso que custou uma investigação de rede: um
+**coturn no ar na máquina** e a instância sem saber que ele existe.
+
+A instalação do vídeo tem duas partes, e a segunda é fácil de esquecer porque a
+primeira termina com tudo parecendo pronto — o coturn sobe, escuta na 3478,
+`systemctl is-active` responde `active`. Falta ligar `CHAT_TURN` no
+`/etc/lachat-<cliente>.env`, que é outro arquivo.
+
+**O sintoma disso não se parece com configuração faltando. Parece defeito de
+rede:** a reunião abre, as pessoas aparecem, e todos os retratos ficam
+eternamente em "conectando…", porque cada navegador tenta conexão direta com um
+STUN público e nada mais — o que falha quase sempre entre celulares em rede
+móvel, onde o CGNAT impede o caminho direto.
+
+Perguntar "há um coturn nesta máquina?" custa um `ss` e transforma meia hora de
+investigação numa linha de configuração.
+
+Entrou também a conferência do par: `CHAT_TURN` sem `CHAT_TURN_SEGREDO` faz o
+coturn **recusar** as credenciais — os dois têm de existir, e o segredo tem de
+bater com o `static-auth-secret`.
+
+---
+
+## 0.13.2 — 23/08/2026 · o nome que sumia e o vídeo que piscava
+
+Dois defeitos vistos na tela de uma reunião real, com quatro pessoas. Nenhum
+dos dois quebrava teste nenhum.
+
+### Todos os retratos escritos "…"
+
+O evento `cham.entrou` mandava a lista de participantes **sem o campo `nome`**.
+Essa lista é gravada por cima da que o cliente já tinha — então a primeira
+pessoa a entrar apagava a identificação de **todo mundo** de uma vez, inclusive
+de quem já estava lá havia meia hora com o nome certo na tela.
+
+A consulta já trazia o campo (é um JOIN com `usuarios`); ele só não estava sendo
+copiado para o evento. Passou despercebido porque a suíte conferia QUEM entrou
+(`u`) e nunca o conteúdo da lista — e porque, com duas pessoas em teste, um "…"
+a mais não chama atenção. Com quatro, na tela do cliente, chama.
+
+Duas trancas: o servidor manda `nome` e `avatar`, e o cliente passou a
+**mesclar** em vez de substituir — um campo ausente no evento não apaga mais o
+que já se sabia.
+
+### O vídeo piscando
+
+`pintarChamada()` reconstrói a tela inteira, e é chamada de dentro do
+`oniceconnectionstatechange` — que dispara muitas vezes por segundo enquanto a
+conexão não fecha. Cada chamada **recriava os elementos `<video>`** e reatribuía
+as streams.
+
+Os dois sintomas do relato eram a mesma cadeia: conexão travada → rajada de
+eventos de ICE → rajada de repinturas → piscar. Quem estivesse com a reunião
+funcionando não veria nada; quem estivesse com problema de rede via o problema
+em dobro.
+
+Agora os elementos são guardados antes de limpar e devolvidos aos quadros novos
+— mover um `<video>` de lugar no DOM não interrompe a mídia, recriá-lo sim. E as
+repinturas passaram a ser agendadas por `requestAnimationFrame`: uma rajada de
+vinte eventos vira **uma** pintura.
+
+### Nota sobre o relay
+
+O sintoma "conectando…" que revelou os dois é de REDE, não destes defeitos.
+Desde a 0.12.0 toda reunião por link usa `iceTransportPolicy: relay` — o que
+significa que, com `CHAT_TURN` configurado mas o coturn inacessível, **nenhum
+candidato sobra e a chamada nunca fecha**. Sem `CHAT_TURN`, a política volta a
+`all` e a conexão tenta o caminho direto.
+
+---
+
 ## 0.13.1 — 23/08/2026 · o relatório acusava uma instalação correta
 
 O `verificar.sh` dizia **"CHAT_BASE não está no ambiente"** em instâncias onde

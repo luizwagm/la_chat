@@ -714,7 +714,13 @@
 
         case "cham.entrou": {
           if (!v.chamada || m.id !== v.chamada.id) return;
-          for (const p of m.participantes || []) v.participantes.set(p.id, p);
+          /* MESCLA, e não substitui. O evento é a fonte da verdade para o
+             ESTADO (quem está dentro, mudo, com câmera), mas um campo ausente
+             nele não deve apagar o que já se sabia — foi assim que o nome de
+             todos sumiu quando o servidor parou de enviá-lo. Segunda tranca:
+             a primeira é o servidor mandar o nome. */
+          for (const p of m.participantes || [])
+            v.participantes.set(p.id, { ...(v.participantes.get(p.id) || {}), ...p });
           /* EU JÁ ESTAVA AQUI: sou eu quem oferece ao recém-chegado.
              Quem chega não oferece a ninguém — só responde. É o que evita a
              colisão de ofertas no caso comum. */
@@ -818,7 +824,11 @@
         mandarSinal: (para, tipo, dadosSinal) => {
           this.enviarPeloSocket({ t: "cham.sinal", c: v.chamada.id, para, tipo, dados: dadosSinal });
         },
-        aoMudar: () => this.pintarChamada(),
+        /* AGENDA em vez de pintar na hora. O ICE muda de estado muitas vezes
+           por segundo enquanto negocia, e cada mudança pedia uma tela inteira.
+           Com o agendamento, uma rajada de vinte eventos vira UMA pintura no
+           próximo quadro de vídeo do navegador. */
+        aoMudar: () => this.agendarPintura(),
         aoErro: (e) => {
           if (window.CHAT_DEBUG) console.warn("webrtc:", e?.message || e);
         },
@@ -1055,10 +1065,45 @@
       el.textContent = relogio(Date.now() - inicio);
     },
 
+    /* ======================================================================
+       A REPINTURA NÃO PODE DESTRUIR OS <video>
+
+       Esta função reconstrói a tela inteira, e é chamada de dentro do
+       `oniceconnectionstatechange` — que dispara muitas vezes por segundo
+       enquanto a conexão não fecha. Cada chamada recriava os elementos de
+       vídeo e reatribuía as streams, e o efeito na tela era PISCAR.
+
+       Os dois sintomas eram a mesma cadeia: conexão travada → rajada de
+       eventos de ICE → rajada de repinturas → piscar. Quem estivesse com a
+       reunião funcionando não via nada; quem estivesse com problema de rede
+       via o problema em dobro.
+
+       Aqui os elementos são GUARDADOS antes de limpar e devolvidos aos
+       quadros novos. Trocar de lugar no DOM não interrompe a mídia; recriar
+       o elemento, sim.
+       ====================================================================== */
+    /* Coalesce as repinturas: várias no mesmo quadro viram uma. Sem
+       `requestAnimationFrame` (aba em segundo plano, navegador antigo) cai
+       num `setTimeout` curto, que é pior mas nunca deixa de pintar. */
+    agendarPintura() {
+      if (this._pinturaAgendada) return;
+      this._pinturaAgendada = true;
+      const pintar = () => { this._pinturaAgendada = false; this.pintarChamada(); };
+      if (typeof requestAnimationFrame === "function") requestAnimationFrame(pintar);
+      else setTimeout(pintar, 40);
+    },
+
     pintarChamada() {
       const v = this.video;
       const alvo = this.el.chamada;
       if (!v?.chamada || !alvo) return;
+
+      const videosVivos = new Map();
+      for (const q of alvo.querySelectorAll(".quadro")) {
+        const vid = q.querySelector("video");
+        if (vid && q.dataset.quem) videosVivos.set(q.dataset.quem, vid);
+      }
+      this._videosVivos = videosVivos;
 
       limpar(alvo);
 
@@ -1163,6 +1208,7 @@
 
     quadroDe({ id, nome, avatar, fluxo, ehEu, camera, microfone, tela, estadoRede }) {
       const v = this.video;
+      const reaproveitar = this._videosVivos?.get(String(id));
       const destacado = v.destaque === id;
       const q = criar("div", {
         classe: "quadro" + (ehEu ? " eu" : "") + (tela ? " tela" : "") +
@@ -1181,6 +1227,8 @@
         },
       });
 
+      q.dataset.quem = String(id);
+
       const temVideo = fluxo && fluxo.getVideoTracks().some((t) => t.readyState === "live") && camera;
 
       /* ==================================================================
@@ -1198,16 +1246,21 @@
          continua no DOM, tocando.
          ================================================================== */
       if (fluxo) {
-        const vid = criar("video", { autoplay: "", playsinline: "" });
+        /* REAPROVEITA o elemento da pintura anterior, se houver. É isto que
+           impede o piscar: um <video> novo reinicia a decodificação; o mesmo
+           <video>, movido de lugar, não. */
+        const vid = reaproveitar || criar("video", { autoplay: "", playsinline: "" });
         /* O próprio vídeo vai MUDO, sempre. Sem isto o microfone capta o
            próprio alto-falante e a reunião vira microfonia — e é o defeito
            número um de quem escreve isto pela primeira vez. */
         if (ehEu) vid.muted = true;
-        vid.srcObject = fluxo;
+        /* Só reatribui se MUDOU. Reatribuir a mesma stream reinicia o
+           elemento, que é justamente o que estamos evitando. */
+        if (vid.srcObject !== fluxo) vid.srcObject = fluxo;
         /* `play()` pode ser recusado pela política de autoplay; o `autoplay`
            com `muted` cobre o caso do próprio vídeo, e o remoto tem gesto do
            usuário atrás (ele clicou para entrar). */
-        vid.play?.().catch(() => { });
+        if (vid.paused) vid.play?.().catch(() => { });
         q.appendChild(vid);
       }
 

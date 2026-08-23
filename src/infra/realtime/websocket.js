@@ -512,8 +512,22 @@ function ligarAoBarramento({ barramento, transporte, EVENTOS }) {
        oferta: ver a regra do "educado" em docs/VIDEO.md. */
     transporte.publicar(paraIds, {
       t: "cham.entrou", c: conversaId, id: chamadaId, u: usuarioId,
+      /* ==================================================================
+         O NOME VAI JUNTO — e a falta dele apagava o nome de TODO MUNDO.
+
+         Esta lista chega ao cliente e é gravada por cima da que ele já tinha.
+         Sem `nome` e `avatar` aqui, a primeira pessoa a entrar fazia todos
+         os retratos da reunião perderem a identificação de uma vez: quatro
+         quadros escritos "…", inclusive os de quem já estava lá havia meia
+         hora com o nome correto na tela.
+
+         O consulta já traz os campos (é um JOIN com `usuarios`); eles só não
+         estavam sendo copiados para o evento.
+         ================================================================== */
       participantes: (participantes || []).map((p) => ({
         id: p.usuario_id, estado: p.estado,
+        nome: [p.nome, p.sobrenome].filter(Boolean).join(" "),
+        avatar: p.avatar || "",
         microfone: !!p.microfone, camera: !!p.camera, tela: !!p.tela,
       })),
     });
