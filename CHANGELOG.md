@@ -5,6 +5,47 @@ recurso, 3ª para correção. Nenhuma casa para no 9.
 
 ---
 
+## 0.13.5 — 23/08/2026 · o script que mandava apontar o DNS para o Docker
+
+Três defeitos do `criar-relay.sh`, todos vindos de um uso real.
+
+### Aceitava qualquer coisa como domínio
+
+Chamado com `bemestar` — que é nome de INSTÂNCIA, do script vizinho — ele
+seguia adiante procurando o DNS de uma palavra solta e terminava mandando criar
+um registro A para ela.
+
+A confusão era previsível, porque os dois scripts recebem coisas diferentes:
+
+    ./deploy.sh       <instancia> <porta> <origens>   ← por CLIENTE
+    ./criar-relay.sh  <dominio>   [email]             ← por SERVIDOR
+
+Agora ele recusa na entrada. E, se o nome corresponder a uma instância que
+existe, diz qual das duas coisas a pessoa provavelmente queria.
+
+### Sugeria o IP errado — e o errado era privado
+
+Para dizer "aponte o DNS para cá", ele pegava o primeiro endereço da lista que
+tivesse um ponto. Num servidor com contêineres, esse é `172.17.0.1`: **a ponte
+do Docker**, endereço privado desta máquina e de mais ninguém.
+
+Sugestão errada num passo de infraestrutura é pior que sugestão nenhuma — tem
+cara de autoridade, e o registro criado a partir dela demora a ser desconfiado.
+Agora as faixas privadas (10/8, 172.16/12, 192.168/16, 127/8, 169.254/16 e o
+CGNAT 100.64/10) são descartadas, e o IPv6 fica para o registro AAAA.
+
+### O arquivo estava duplicado, e o ensaio não pegou
+
+Uma edição anterior partiu uma linha ao meio e deixou os passos 2 a 8 em duas
+cópias. **O ensaio passou 27/27 mesmo assim** — rodar o script duas vezes é
+idempotente, e todas as asserções continuavam verdadeiras.
+
+O arquivo foi remontado a partir das partes íntegras, com conferência de que
+cada passo aparece uma única vez. A lição é sobre o ensaio: ele provava o
+RESULTADO e não notava que o caminho até ele havia sido percorrido em dobro.
+
+---
+
 ## 0.13.4 — 23/08/2026 · duas checagens que erravam
 
 Ambas encontradas por um relatório de verificação rodado num servidor de

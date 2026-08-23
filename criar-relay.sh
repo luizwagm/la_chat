@@ -65,6 +65,44 @@ azul()    { printf "\033[1;34m%s\033[0m\n" "$1"; }
 
 [ "$(id -u)" -eq 0 ] || { vermelho "Rode com sudo."; exit 1; }
 
+# ==========================================================================
+#  O PRIMEIRO ARGUMENTO É UM DOMÍNIO — e há um script vizinho que recebe outra
+#  coisa, o que torna a confusão previsível:
+#
+#      ./deploy.sh       <instancia> <porta> <origens>     ← por CLIENTE
+#      ./criar-relay.sh  <dominio>   [email]               ← por SERVIDOR
+#
+#  Chamado com `bemestar`, este script seguia adiante procurando o DNS de um
+#  nome que não é nome de máquina, e terminava mandando criar um registro A
+#  para uma palavra solta. Recusar aqui custa três linhas e economiza a
+#  investigação inteira.
+# ==========================================================================
+case "$DOMINIO" in
+  *.*) ;;
+  *)
+    vermelho "\"$DOMINIO\" não é um domínio — falta o ponto."
+    echo
+    if [ -f "$ETC/lachat-$DOMINIO.env" ]; then
+      amarelo "  Existe a INSTÂNCIA '$DOMINIO' neste servidor. Você quis outra coisa:"
+      echo
+      echo "    · ligar o vídeo NESSA instância (a segunda parte da instalação):"
+      echo "        sudo nano $ETC/lachat-$DOMINIO.env      # CHAT_TURN, CHAT_TURN_SEGREDO"
+      echo "        sudo systemctl restart lachat@$DOMINIO"
+      echo
+      echo "    · ou instalar o relay, que é UM para o servidor inteiro:"
+      echo "        sudo $0 chat.seudominio.com"
+    else
+      echo "  Uso: sudo $0 <dominio> [email]"
+      echo "       sudo $0 chat.seudominio.com"
+      echo
+      echo "  O relay é UM por servidor e atende todas as instâncias do chat."
+      echo "  Para instalar uma instância de cliente, o script é o ./deploy.sh."
+    fi
+    echo
+    exit 1
+    ;;
+esac
+
 azul "── LA Chat · servidor de relay ───────────────────────"
 echo "     domínio : $DOMINIO"
 echo "     escopo  : o servidor inteiro (todas as instâncias do chat)"
@@ -91,6 +129,35 @@ $IP_SERVIDOR"
 resolve() { dig +short "$2" "$1" 2>/dev/null | grep -E '^[0-9a-fA-F.:]+$' | tail -1; }
 daqui()   { [ -n "$1" ] && echo "$MEUS_IPS" | grep -qxF "$1"; }
 
+# ==========================================================================
+#  QUAL DESTES ENDEREÇOS É O PÚBLICO
+#
+#  Um servidor que hospeda contêineres traz as pontes do Docker (172.17.0.1,
+#  172.18.0.1) na mesma lista das interfaces de verdade. A versão anterior
+#  sugeria "o primeiro que tiver ponto" — e mandou apontar o DNS para a ponte
+#  do Docker, que é endereço privado desta máquina e de mais ninguém.
+#
+#  Sugestão errada num passo de infraestrutura é pior que sugestão nenhuma:
+#  ela tem cara de autoridade, e o registro criado a partir dela demora a ser
+#  desconfiado.
+# ==========================================================================
+ehPrivado() {
+  case "$1" in
+    10.*|127.*|169.254.*|192.168.*) return 0 ;;
+    100.6[4-9].*|100.[7-9][0-9].*|100.1[0-1][0-9].*|100.12[0-7].*) return 0 ;;
+    172.1[6-9].*|172.2[0-9].*|172.3[0-1].*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+IP_SUGERIDO=""
+for cand in $MEUS_IPS; do
+  case "$cand" in *:*) continue ;; esac      # IPv6 fica para o registro AAAA
+  ehPrivado "$cand" && continue
+  IP_SUGERIDO="$cand"; break
+done
+
+
 A=$(resolve "$DOMINIO" A)
 AAAA=$(resolve "$DOMINIO" AAAA)
 echo "     este servidor : $(echo "$MEUS_IPS" | tr '\n' ' ')"
@@ -100,7 +167,12 @@ if daqui "$A" || daqui "$AAAA"; then
   verde "     o domínio resolve para este servidor"
 else
   vermelho "     o DNS não aponta para cá."
-  vermelho "     Crie um registro A: $DOMINIO -> $(echo "$MEUS_IPS" | grep -m1 '\.')"
+  if [ -n "$IP_SUGERIDO" ]; then
+    vermelho "     Crie um registro A: $DOMINIO -> $IP_SUGERIDO"
+  else
+    vermelho "     Crie um registro A para $DOMINIO apontando para o IP público"
+    amarelo  "     (não achei endereço público entre os desta máquina — só privados)"
+  fi
   vermelho "     Com certeza do DNS: sudo IP_SERVIDOR=<ip> $0 $DOMINIO"
   exit 1
 fi
