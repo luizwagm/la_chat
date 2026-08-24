@@ -377,6 +377,59 @@ function criarServicoDeSalas({ repos, conf, barramento, limites, convidados,
     },
 
     /* ======================================================================
+       PRORROGAR — mais alguns minutos, decididos por quem conduz
+
+       A reunião acaba no horário marcado, e o aviso dos últimos cinco minutos
+       existe para ninguém ser pego de surpresa. Mas "acabou o tempo" no meio
+       de uma frase é uma regra que trabalha contra a pessoa: o prazo existe
+       para a sala não virar permanente, não para interromper conversa.
+
+       Então o anfitrião pode acrescentar — em pedaços curtos, de uma lista, e
+       sem furar o teto total. E o prazo novo vai para TODAS as telas: um
+       relógio que discorda do outro é pior que relógio nenhum.
+       ====================================================================== */
+    async prorrogar(sessao, salaId, minutos) {
+      exigirVideoLigado();
+      if (sessao.ehConvidado) throw erros.semPermissao();
+
+      const sala = await repos.salas.porId(sessao.contextoId, salaId);
+      if (!sala) throw erros.naoEncontrado();
+      if (sala.criada_por !== sessao.usuarioId && !sessao.ehAdmin)
+        throw erros.semPermissao("Só quem conduz a reunião pode acrescentar tempo.");
+      if (sala.estado !== "ativa")
+        throw erros.invalido("Esta reunião não está acontecendo.");
+      if (dom.tempo(sala).acabou)
+        throw erros.invalido(dom.RECUSAS.tempo_esgotado);
+
+      const v = dom.validarProrrogacao(minutos);
+      if (!v.ok) throw erros.invalido(v.erro);
+
+      const cabe = dom.cabeProrrogar(sala, v.minutos);
+      if (!cabe.ok) throw erros.invalido(cabe.erro);
+
+      if (!await repos.salas.prorrogar(sala.id, v.minutos))
+        throw erros.invalido("Esta reunião não está acontecendo.");
+
+      const atual = await repos.salas.porIdCru(sala.id);
+      const encerraEm = Number(atual.encerra_em);
+
+      /* O aviso dos últimos minutos precisa poder sair DE NOVO. Sem esta
+         linha, prorrogar uma reunião já avisada a deixaria terminar em
+         silêncio — a marca em memória diria que o aviso já foi dado. */
+      avisados.delete(sala.id);
+
+      barramento.emitir(EVENTOS.SALA_PRORROGADA, {
+        contextoId: sala.contexto_id,
+        salaId: sala.id,
+        encerraEm,
+        minutos: v.minutos,
+        paraIds: sala.chamada_id ? await repos.chamadas.dentro(sala.chamada_id) : [],
+      });
+
+      return { ok: true, encerraEm, minutos: v.minutos };
+    },
+
+    /* ======================================================================
        RETOMAR — recarregar a página não é entrar de novo
 
        No celular, recarregar acontece o tempo todo: a pessoa gira a tela,

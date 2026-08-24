@@ -85,6 +85,39 @@
 .chamada-topo .vista button:hover { background: #21262d; color: #e8eaee; }
 .chamada-topo .vista button:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
 
+/* ==========================================================================
+   O BALÃO DO FIM
+
+   Aparece nos últimos minutos, acima da grade, e some quando o prazo muda.
+   Fica no fluxo (não flutuando por cima dos rostos): tapar quem está falando
+   para avisar que o tempo acaba trocaria um incômodo por outro.
+   ========================================================================== */
+.balao {
+  flex: none; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin: 0 12px 8px; padding: 10px 14px; border-radius: 10px;
+  background: rgba(240, 160, 32, .14); border: 1px solid rgba(240, 160, 32, .38);
+  color: #f0c070; font-size: 13.5px;
+}
+.balao[hidden] { display: none; }
+.balao b { color: #ffd591; font-weight: 600; }
+.balao .resta { font-variant-numeric: tabular-nums; }
+.balao form { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.balao select {
+  font: inherit; font-size: 13px; padding: 5px 8px; border-radius: 7px;
+  background: #161b22; color: #e8eaee; border: 1px solid #30363d;
+}
+.balao button {
+  font: inherit; font-size: 13px; font-weight: 600; padding: 6px 12px;
+  border-radius: 7px; border: 0; cursor: pointer;
+  background: #f0a020; color: #1a1200;
+}
+.balao button:hover { filter: brightness(1.08); }
+.balao button:disabled { opacity: .6; cursor: default; }
+.balao button.fechar {
+  background: transparent; color: #f0c070; border: 1px solid rgba(240,160,32,.4);
+  font-weight: 400;
+}
+
 /* O aviso que fica no lugar da reunião enquanto ela está na outra janela.
    Sem ele, quem fechasse a janela de vista acharia que a reunião caiu. */
 .chamada-fora {
@@ -1296,6 +1329,9 @@
       if (alvo.dataset.aviso)
         alvo.appendChild(criar("div", { classe: "faixa-video", texto: alvo.dataset.aviso }));
 
+      const balao = this.balaoDoFim?.();
+      if (balao) alvo.appendChild(balao);
+
       /* ---- a grade ---- */
       const grade = criar("div", { classe: "grade" });
       grade.dataset.n = String(dentro.length);
@@ -1748,6 +1784,15 @@
     const resta = Math.max(0, Number(this.sala.encerraEm) - Date.now());
     el.textContent = "termina em " + relogio(resta);
     el.classList.toggle("acabando", resta <= 5 * 60_000);
+
+    /* O balão conta junto, sem repintar a tela inteira a cada segundo. */
+    const naBolha = this.el.chamada?.querySelector(".balao .resta");
+    if (naBolha) {
+      const min = Math.max(1, Math.round(resta / 60_000));
+      naBolha.textContent = min === 1
+        ? "A reunião termina em 1 minuto."
+        : "A reunião termina em " + min + " minutos.";
+    }
   };
 
   /* ------------------------------------------------------------------------
@@ -1774,23 +1819,108 @@
   const receberDaSala = LaChat.prototype.receber;
   LaChat.prototype.receber = function (m) {
     if (m?.t === "sala.aviso") return this.avisoDaSala(m);
+    if (m?.t === "sala.prazo") return this.prazoDaSala(m);
     if (m?.t === "sala.fim") return this.fimDaSala(m);
     return receberDaSala.call(this, m);
   };
 
   LaChat.prototype.avisoDaSala = function (m) {
-    const min = Math.max(1, Math.round(Number(m.restanteMs || 0) / 60_000));
-    const texto = min === 1
-      ? "Falta 1 minuto para o fim da reunião."
-      : "Faltam " + min + " minutos para o fim da reunião.";
+    const v = this.video;
+    if (v) v.fimProximo = true;
 
-    this.avisoDeVideo(texto);
-    /* Um aviso que some sozinho seria perdido por quem estava falando. Este
-       fica até o fim — é o último momento em que ainda dá para se despedir. */
+    /* O balão é montado na pintura, com o relógio da própria sala — e não com
+       o `restanteMs` deste evento. O evento chega uma vez; o balão precisa
+       continuar contando. */
+    this.pintarChamada();
 
     this.dispatchEvent(new CustomEvent("chat:sala-aviso", {
       bubbles: true, composed: true, detail: { restanteMs: Number(m.restanteMs || 0) },
     }));
+  };
+
+  /* ------------------------------------------------------------------------
+     O PRAZO MUDOU — para todo mundo que está dentro
+
+     Vem do servidor depois de alguém acrescentar tempo. Cada tela precisa
+     concordar sobre quando acaba: um relógio que discorda do outro é pior que
+     relógio nenhum.
+     ------------------------------------------------------------------------ */
+  LaChat.prototype.prazoDaSala = function (m) {
+    const v = this.video;
+    if (this.sala && m.encerraEm) this.sala.encerraEm = Number(m.encerraEm);
+    if (v) v.fimProximo = false;
+
+    const min = Number(m.minutos || 0);
+    if (min) {
+      this.avisoDeVideo("A reunião ganhou mais " + min + (min === 1 ? " minuto." : " minutos."));
+      clearTimeout(this._avisoPrazo);
+      this._avisoPrazo = setTimeout(() => this.avisoDeVideo(""), 6000);
+    }
+    this.pintarChamada();
+    this.pintarRelogio();
+  };
+
+  /* ------------------------------------------------------------------------
+     O BALÃO
+
+     Para quem CONDUZ, ele oferece mais tempo. Para os demais, apenas avisa —
+     acrescentar tempo é decisão de quem marcou a reunião, e um select que
+     falha ao ser usado seria pior que select nenhum.
+     ------------------------------------------------------------------------ */
+  LaChat.prototype.balaoDoFim = function () {
+    const v = this.video;
+    if (!v?.fimProximo || !this.sala?.encerraEm) return null;
+
+    const resta = Math.max(0, Number(this.sala.encerraEm) - Date.now());
+    const min = Math.max(1, Math.round(resta / 60_000));
+
+    const balao = criar("div", { classe: "balao", role: "status" }, [
+      criar("b", { texto: "⏳" }),
+      criar("span", { classe: "resta", texto: min === 1
+        ? "A reunião termina em 1 minuto."
+        : "A reunião termina em " + min + " minutos." }),
+    ]);
+
+    if (!this.sala.souDono) return balao;
+
+    const escolha = criar("select", { "aria-label": "Minutos a acrescentar" });
+    for (const n of PRORROGACOES) {
+      const o = criar("option", { texto: "+" + n + (n === 1 ? " minuto" : " minutos") });
+      o.value = String(n);
+      if (n === 5) o.selected = true;
+      escolha.appendChild(o);
+    }
+
+    const botao = criar("button", { type: "submit", texto: "Acrescentar" });
+
+    const forma = criar("form", {}, [escolha, botao]);
+    forma.onsubmit = async (e) => {
+      e.preventDefault();
+      botao.disabled = true;
+      try {
+        const r = await this.api("/salas/" + this.sala.id + "/prorrogar", {
+          metodo: "POST", corpo: { minutos: Number(escolha.value) },
+        });
+        /* A tela não espera o evento do socket para si mesma: quem clicou
+           precisa ver o efeito na hora. O evento ainda chega, e é ele que
+           acerta o relógio de todos os OUTROS. */
+        this.prazoDaSala({ encerraEm: r.encerraEm, minutos: r.minutos });
+      } catch (err) {
+        this.mostrarFaixa(err.message, true);
+        botao.disabled = false;
+      }
+    };
+
+    /* Dispensar sem acrescentar: quem já sabe que vai encerrar não precisa do
+       balão ocupando a tela até o fim. */
+    const dispensar = criar("button", {
+      classe: "fechar", type: "button", texto: "Dispensar",
+      onclick: () => { v.fimProximo = false; this.pintarChamada(); },
+    });
+    forma.appendChild(dispensar);
+
+    balao.appendChild(forma);
+    return balao;
   };
 
   const MOTIVOS_DA_SALA = {
@@ -1975,9 +2105,14 @@
      existem de verdade.
      ------------------------------------------------------------------------ */
   const DURACOES = [
-    [15, "15 minutos"], [30, "30 minutos"], [60, "1 hora"],
+    [15, "15 minutos"], [30, "30 minutos"], [40, "40 minutos"], [60, "1 hora"],
     [90, "1h30"], [120, "2 horas"], [240, "4 horas"],
   ];
+
+  /* Os pedaços que o anfitrião pode acrescentar quando o tempo aperta. A lista
+     é a mesma do servidor (dominio/salas.js) — divergir faria a tela oferecer
+     um valor que a rota recusa. */
+  const PRORROGACOES = [1, 2, 3, 5, 8, 10];
 
   LaChat.prototype.formaDeNovaSala = function () {
     const titulo = criar("input", { type: "text", maxlength: "80",
@@ -2072,7 +2207,7 @@
         abrir.disabled = true;
         try {
           const r = await this.api("/salas/" + s.id + "/abrir", { metodo: "POST" });
-          this.sala = { id: s.id, titulo: s.titulo, link: s.link, encerraEm: r.encerraEm || null };
+          this.sala = { id: s.id, titulo: s.titulo, link: s.link, souDono: true, encerraEm: r.encerraEm || null };
           await this.montarChamada(r.chamada || r);
           this.carregarSalas();
         } catch (e) {
@@ -2086,7 +2221,7 @@
       voltar.onclick = async () => {
         try {
           const r = await this.api("/chamadas/" + s.chamadaId + "/entrar", { metodo: "POST" });
-          this.sala = { id: s.id, titulo: s.titulo, link: s.link, encerraEm: s.encerraEm || null };
+          this.sala = { id: s.id, titulo: s.titulo, link: s.link, souDono: true, encerraEm: s.encerraEm || null };
           await this.montarChamada(r);
         } catch (e) { this.mostrarFaixa(e.message, true); }
       };

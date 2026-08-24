@@ -144,6 +144,24 @@ function criar(Q) {
       return r.linhas > 0;
     },
 
+    /* ====================================================================
+       PRORROGAR — soma sobre o prazo ATUAL, dentro do banco
+
+       `encerra_em = encerra_em + ?`, e não um valor calculado fora e gravado
+       por cima. Dois cliques quase simultâneos no botão de acrescentar
+       somariam os dois; com o valor calculado antes, o segundo escreveria por
+       cima do primeiro e um dos acréscimos sumiria sem ninguém notar.
+
+       `estado = 'ativa'` no WHERE: sala que já acabou não se estica.
+       ==================================================================== */
+    async prorrogar(salaId, minutos) {
+      const r = await Q.run(
+        `UPDATE salas SET encerra_em = encerra_em + ?
+          WHERE id = ? AND estado = 'ativa' AND encerra_em IS NOT NULL`,
+        Math.round(minutos) * 60_000, salaId);
+      return r.linhas > 0;
+    },
+
     async encerrar(salaId, estado = "encerrada") {
       const r = await Q.run(
         `UPDATE salas SET estado = ?, encerrada_em = ?

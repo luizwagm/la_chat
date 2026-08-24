@@ -78,6 +78,9 @@ const EVENTOS = Object.freeze({
      O aviso dos últimos minutos e o encerramento saem do SERVIDOR, e não do
      relógio do navegador — que é do visitante e se adianta com um clique. */
   SALA_AVISO: "sala.aviso",
+  /* O prazo mudou. Vai para TODOS que estão dentro — o relógio de cada tela
+     precisa concordar, ou a reunião acaba antes do que uns estão vendo. */
+  SALA_PRORROGADA: "sala.prorrogada",
   SALA_ENCERRADA: "sala.encerrada",
   ARQUIVO_ENVIADO: "arquivo.enviado",
 });

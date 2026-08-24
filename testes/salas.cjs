@@ -760,6 +760,83 @@ async function rodar() {
       })).status, 200, "e quem tinha o link entra na reunião reaberta");
     }
 
+    /* ======================================================================
+       PRORROGAR — mais alguns minutos, decididos por quem conduz
+
+       O prazo existe para a sala não virar permanente, não para interromper
+       conversa. Acabar o tempo no meio de uma frase é uma regra trabalhando
+       contra a pessoa — então o anfitrião pode acrescentar, em pedaços curtos
+       e sem furar o teto total.
+       ====================================================================== */
+    P.secao("acrescentar tempo à reunião");
+
+    {
+      const criadaP = await ana.vai("/salas", {
+        metodo: "POST", corpo: { titulo: "ZZ QA Prorrogar", duracaoMin: 30, maxConvidados: 3 },
+      });
+      const salaP = criadaP.dados;
+      const abriuP = await ana.vai(`/salas/${salaP.id}/abrir`, { metodo: "POST" });
+      const fim0 = Number(abriuP.dados.encerraEm);
+      P.ok(fim0 > 0, "a sala abre com hora marcada");
+
+      const mais5 = await ana.vai(`/salas/${salaP.id}/prorrogar`, {
+        metodo: "POST", corpo: { minutos: 5 },
+      });
+      P.eq(mais5.status, 200, "o anfitrião acrescenta 5 minutos");
+      P.eq(Number(mais5.dados.encerraEm) - fim0, 5 * 60_000,
+        "e o prazo anda exatamente 5 minutos");
+
+      /* SOMA sobre o prazo atual, e não substitui: duas prorrogações seguidas
+         valem as duas. */
+      const mais3 = await ana.vai(`/salas/${salaP.id}/prorrogar`, {
+        metodo: "POST", corpo: { minutos: 3 },
+      });
+      P.eq(Number(mais3.dados.encerraEm) - fim0, 8 * 60_000,
+        "duas prorrogações somam — a segunda não apaga a primeira");
+
+      /* A LISTA é fechada: campo livre viraria sala permanente. */
+      P.recusa(await ana.vai(`/salas/${salaP.id}/prorrogar`, {
+        metodo: "POST", corpo: { minutos: 7 },
+      }), 400, "7 minutos não está na lista — é recusado");
+      P.recusa(await ana.vai(`/salas/${salaP.id}/prorrogar`, {
+        metodo: "POST", corpo: { minutos: 480 },
+      }), 400, "nem 480, que transformaria a reunião marcada em sala permanente");
+
+      /* Só quem conduz. */
+      P.recusa(await bruno.vai(`/salas/${salaP.id}/prorrogar`, {
+        metodo: "POST", corpo: { minutos: 5 },
+      }), 403, "outro funcionário NÃO acrescenta tempo");
+
+      /* O convidado, muito menos — e ele nem alcança a rota. */
+      const espiao = abaDeConvidado(chat.base);
+      await espiao.vai(`/call/${salaP.codigo}/entrar`, {
+        metodo: "POST", corpo: { nome: "ZZ QA Espiao" },
+      });
+      P.recusa(await espiao.vai(`/salas/${salaP.id}/prorrogar`, {
+        metodo: "POST", corpo: { minutos: 5 },
+      }), 403, "e o CONVIDADO não estica a própria reunião");
+
+      /* O TETO TOTAL continua valendo, e é o que impede a soma infinita. */
+      const bd = new (require("better-sqlite3"))(path.join(chat.pastaDados, "chat.db"));
+      const agora = Date.now();
+      bd.prepare("UPDATE salas SET iniciada_em = ?, encerra_em = ? WHERE id = ?")
+        .run(agora - 7.9 * 60 * 60_000, agora + 5 * 60_000, salaP.id);
+      bd.close();
+
+      P.recusa(await ana.vai(`/salas/${salaP.id}/prorrogar`, {
+        metodo: "POST", corpo: { minutos: 10 },
+      }), 400, "perto das 8 horas, acrescentar é recusado — o teto não se fura");
+
+      /* E depois do fim, não se ressuscita reunião. */
+      const bd2 = new (require("better-sqlite3"))(path.join(chat.pastaDados, "chat.db"));
+      bd2.prepare("UPDATE salas SET encerra_em = ? WHERE id = ?").run(Date.now() - 1000, salaP.id);
+      bd2.close();
+
+      P.recusa(await ana.vai(`/salas/${salaP.id}/prorrogar`, {
+        metodo: "POST", corpo: { minutos: 5 },
+      }), 400, "e reunião com o tempo esgotado não se estica — acabou é acabou");
+    }
+
     P.secao("acabado o tempo, a reunião não volta");
 
     {

@@ -5,6 +5,50 @@ recurso, 3ª para correção. Nenhuma casa para no 9.
 
 ---
 
+## 0.20.0 — 24/08/2026 · acrescentar tempo à reunião
+
+**40 minutos** entrou na lista de durações — é a consulta padrão de muita
+clínica, e faltava.
+
+### O balão dos últimos minutos
+
+O aviso de "faltam 5 minutos" era uma frase e nada mais. Agora ele é um balão, e
+para quem CONDUZ traz um seletor: **+1, +2, +3, +5, +8 e +10 minutos**.
+
+O prazo existe para a sala não virar permanente, **não para interromper
+conversa**. Acabar o tempo no meio de uma frase é uma regra trabalhando contra a
+pessoa — e obrigá-la a criar outro link, mandar de novo e esperar todo mundo
+entrar é pior ainda.
+
+Quem não conduz vê o balão **sem o seletor**. Um controle que falha ao ser usado
+é pior que controle nenhum — e o servidor recusa de qualquer forma, para
+convidado e para outro funcionário.
+
+### O que não se fura
+
+* **A lista é fechada.** Campo livre convidaria a digitar 480 e transformar a
+  reunião marcada numa sala permanente.
+* **O teto total continua valendo.** Somadas, as prorrogações não passam de 8
+  horas: quem precisa de mais não precisa de uma reunião.
+* **Reunião com o tempo esgotado não se estica.** Acabou é acabou — reabrir
+  também não adia, e isso já valia.
+* **A soma acontece no banco** (`encerra_em = encerra_em + ?`), e não com um
+  valor calculado fora. Dois cliques quase simultâneos somariam os dois; com o
+  valor calculado antes, o segundo escreveria por cima do primeiro e um dos
+  acréscimos sumiria sem ninguém notar.
+
+### O relógio de todos concorda
+
+O prazo novo vai por socket para quem está dentro: um relógio que discorda do
+outro é pior que relógio nenhum. E o aviso dos últimos minutos volta a poder
+sair — sem isso, prorrogar uma reunião já avisada a deixaria terminar em
+silêncio, porque a marca em memória diria que o aviso já tinha sido dado.
+
+Quem clicou vê o efeito **na hora**, sem esperar o próprio evento voltar. O
+evento ainda chega, e é ele que acerta o relógio dos outros.
+
+---
+
 ## 0.19.2 — 23/08/2026 · o conector velho que some com capacidades
 
 O profissional continuava sem a aba, com o chat na 0.19.1 e as migrações em dia.

@@ -494,6 +494,11 @@ function criarRotas({ servico, chamadas, salas, sessoes, convidados, conf, porte
       if (metodo === "POST" && p[2] === "abrir" && p.length === 3)
         return ok(await salas.abrir(sessao, salaId));
 
+      if (metodo === "POST" && p[2] === "prorrogar" && p.length === 3) {
+        const c = await lerJson(req, 1024);
+        return ok(await salas.prorrogar(sessao, salaId, c.minutos));
+      }
+
       if (metodo === "GET" && p[2] === "participantes" && p.length === 3)
         return ok(await salas.participantes(sessao, salaId));
 

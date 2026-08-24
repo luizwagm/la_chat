@@ -99,6 +99,37 @@ const DURACAO_PADRAO = 60;
    tempo de encerrar um assunto sem interromper no meio de uma frase. */
 const AVISO_MIN = 5;
 
+/* ==========================================================================
+   PRORROGAR — os minutos que o anfitrião pode acrescentar
+
+   Uma LISTA, e não um campo livre. São os pedaços que uma reunião real
+   atrasa: "só mais dois minutos", "fecho em cinco". Campo aberto convidaria a
+   digitar 480 e transformar a reunião marcada numa sala permanente — que é
+   justamente o que o prazo existe para impedir.
+
+   O TETO CONTINUA VALENDO. Somadas, as prorrogações não podem passar de
+   `DURACAO_MAX`: quem precisa de mais que oito horas não precisa de uma
+   reunião, precisa de outra ferramenta.
+   ========================================================================== */
+const PRORROGACOES = [1, 2, 3, 5, 8, 10];
+
+function validarProrrogacao(minutos) {
+  const n = Math.round(Number(minutos) || 0);
+  if (!PRORROGACOES.includes(n))
+    return { ok: false, erro: `acrescente um destes: ${PRORROGACOES.join(", ")} minutos` };
+  return { ok: true, minutos: n };
+}
+
+/* Quanto ainda cabe, respeitando o teto total da reunião. */
+function cabeProrrogar(sala, minutos, agora = Date.now()) {
+  const inicio = Number(sala?.iniciada_em) || agora;
+  const fimAtual = Number(sala?.encerra_em) || agora;
+  const totalDepois = (fimAtual + minutos * 60_000 - inicio) / 60_000;
+  if (totalDepois > DURACAO_MAX)
+    return { ok: false, erro: `a reunião não pode passar de ${DURACAO_MAX / 60} horas` };
+  return { ok: true };
+}
+
 /* Validade do LINK, diferente da duração da chamada: o link pode valer o dia e
    a reunião durar 40 minutos. Teto de 7 dias — um link de reunião que vale um
    mês é um link que ninguém lembra que existe. */
@@ -232,9 +263,9 @@ const RECUSAS = Object.freeze({
 
 module.exports = {
   ALFABETO, TAMANHO_CODIGO,
-  DURACAO_MIN, DURACAO_MAX, DURACAO_PADRAO, AVISO_MIN,
+  DURACAO_MIN, DURACAO_MAX, DURACAO_PADRAO, AVISO_MIN, PRORROGACOES,
   VALIDADE_PADRAO_H, VALIDADE_MAX_H,
   gerarCodigo, ehCodigo, hashDoCodigo,
-  validarDuracao, validarValidade, validarNome,
+  validarDuracao, validarValidade, validarNome, validarProrrogacao, cabeProrrogar,
   tempo, podeEntrar, RECUSAS,
 };
