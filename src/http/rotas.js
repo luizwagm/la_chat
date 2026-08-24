@@ -270,9 +270,13 @@ function criarRotas({ servico, chamadas, salas, sessoes, convidados, conf, porte
           ip: req.ipReal,
           agente: req.headers["user-agent"] || "",
         });
-        /* O cookie do convidado sai AQUI, e só aqui. */
+        /* O cookie do convidado sai AQUI, e só aqui — mesmo quando a resposta
+           é "espere". É ele que permite perguntar pela decisão depois, e sem
+           ele a pessoa perderia o lugar na fila ao recarregar a página.
+
+           `estado` diz em qual das duas telas ela cai: a fila ou a reunião. */
         return responder(res, 200, {
-          eu: r.eu, sala: r.sala, chamada: r.chamada,
+          estado: r.estado || "dentro", eu: r.eu, sala: r.sala, chamada: r.chamada,
         }, { ...cors, "Set-Cookie": r.cookies });
       }
 
@@ -504,6 +508,15 @@ function criarRotas({ servico, chamadas, salas, sessoes, convidados, conf, porte
 
       if (metodo === "POST" && p[2] === "remover" && p.length === 4)
         return ok(await salas.expulsar(sessao, salaId, p[3]));
+
+      if (metodo === "GET" && p[2] === "pedidos" && p.length === 3)
+        return ok(await salas.pedidos(sessao, salaId));
+
+      if (metodo === "POST" && p[2] === "aprovar" && p.length === 4)
+        return ok(await salas.decidir(sessao, salaId, p[3], true));
+
+      if (metodo === "POST" && p[2] === "negar" && p.length === 4)
+        return ok(await salas.decidir(sessao, salaId, p[3], false));
     }
 
     /* /pessoas/:id */

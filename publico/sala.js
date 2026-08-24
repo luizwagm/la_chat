@@ -36,7 +36,8 @@
 
   const tel = (id) => document.getElementById(id);
 
-  const TELAS = ["tela-carregando", "tela-recusa", "tela-espera", "tela-nome", "reuniao", "tela-fim"];
+  const TELAS = ["tela-carregando", "tela-recusa", "tela-espera", "tela-nome",
+    "tela-fila", "reuniao", "tela-fim"];
   function mostrar(id) {
     for (const t of TELAS) tel(t).classList.toggle("vendo", t === id);
   }
@@ -141,8 +142,8 @@
       clearTimeout(relogioDaEspera);
       if (info.titulo) dizer("nome-titulo", info.titulo);
       if (info.duracaoMin) dizer("nome-sub",
-        "Este nome aparece para todos na reunião. Duração prevista: "
-        + info.duracaoMin + " minutos.");
+        "É este nome que quem conduz a reunião vai ler para aprovar sua entrada. "
+        + "Duração prevista: " + info.duracaoMin + " minutos.");
       mostrar("tela-nome");
       tel("nome").focus();
       if (!previa) abrirPrevia();
@@ -203,7 +204,7 @@
     }
 
     botao.disabled = true;
-    botao.textContent = "Entrando…";
+    botao.textContent = "Enviando pedido…";
 
     let r;
     try {
@@ -221,9 +222,64 @@
     }
 
     clearTimeout(relogioDaEspera);
+
+    /* ==================================================================
+       O LINK DÁ ACESSO À FILA, NÃO À REUNIÃO
+
+       Quem conduz decide quem entra, e a decisão é sobre um nome concreto.
+       Até ela vir, a câmera fica LIGADA de propósito: a pessoa continua se
+       vendo, sabe que está enquadrada, e não descobre um problema de vídeo
+       depois de ser aprovada, na frente de todo mundo.
+       ================================================================== */
+    if (r?.estado === "esperando") {
+      dizer("fila-nome", r.eu?.nome || nome);
+      if (r.sala?.titulo) dizer("fila-titulo", r.sala.titulo);
+      mostrar("tela-fila");
+      return esperarDecisao();
+    }
+
     fecharPrevia();
     await entrarNaReuniao(r);
   });
+
+  /* ==========================================================================
+     ESPERANDO A DECISÃO
+
+     Por PERGUNTA, e não por aviso. O socket entregaria a decisão mais rápido,
+     mas ele é entrega ao vivo: se a conexão oscilar no segundo em que o
+     anfitrião clicar, a resposta se perde e a pessoa espera para sempre — e
+     esperar para sempre é justamente o que esta tela não pode fazer.
+
+     Perguntar de dois em dois segundos é barato, não perde nada e sobrevive a
+     qualquer queda de rede. A rota é a mesma da retomada, que já sabe dizer em
+     que estado a pessoa está.
+     ========================================================================== */
+  let relogioDaFila = null;
+
+  function esperarDecisao() {
+    clearTimeout(relogioDaFila);
+    relogioDaFila = setTimeout(async () => {
+      let r;
+      try {
+        r = await pedir("/call/" + encodeURIComponent(codigo) + "/eu");
+      } catch (e) {
+        /* 403 é a NEGATIVA — a única resposta definitiva. Qualquer outra
+           falha é rede, e rede se tenta de novo. */
+        if (e.status === 403) {
+          dizer("fim-titulo", "Entrada não aprovada");
+          dizer("fim-msg", e.message || "Quem conduz a reunião não aprovou sua entrada.");
+          tel("voltar").hidden = true;
+          return mostrar("tela-fim");
+        }
+        return esperarDecisao();
+      }
+
+      if (r?.estado === "esperando") return esperarDecisao();
+
+      fecharPrevia();
+      await entrarNaReuniao(r);
+    }, 2000);
+  }
 
   async function entrarNaReuniao(r) {
     mostrar("reuniao");
@@ -288,7 +344,7 @@
   tel("voltar").addEventListener("click", () => {
     tentativasDeEspera = 0;
     tel("entrar").disabled = false;
-    tel("entrar").textContent = "Entrar na reunião";
+    tel("entrar").textContent = "Pedir para entrar";
     mostrar("tela-carregando");
     conferir();
   });
@@ -321,6 +377,17 @@
     try {
       const r = await pedir("/call/" + encodeURIComponent(codigo) + "/eu");
       if (!r?.eu?.id) return false;
+
+      /* Recarregar no meio da fila não perde o lugar: a pessoa volta a
+         esperar, e não à tela de nome. */
+      if (r.estado === "esperando") {
+        dizer("fila-nome", r.eu.nome || "");
+        if (r.sala?.titulo) dizer("fila-titulo", r.sala.titulo);
+        mostrar("tela-fila");
+        esperarDecisao();
+        return true;
+      }
+
       await entrarNaReuniao(r);
       return true;
     } catch {

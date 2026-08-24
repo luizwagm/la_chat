@@ -465,6 +465,10 @@ function ligarAoBarramento({ barramento, transporte, EVENTOS }) {
     transporte.publicar(paraIds, { t: "conversa.removida", c: conversaId });
   });
 
+  barramento.escutar(EVENTOS.SALA_PEDIDO, ({ paraIds, salaId, convidado }) => {
+    transporte.publicar(paraIds, { t: "sala.pedido", s: salaId, convidado });
+  });
+
   barramento.escutar(EVENTOS.SALA_PRORROGADA, ({ paraIds, salaId, encerraEm, minutos }) => {
     transporte.publicar(paraIds, { t: "sala.prazo", s: salaId, encerraEm, minutos });
   });

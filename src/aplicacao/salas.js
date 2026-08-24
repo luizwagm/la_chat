@@ -327,28 +327,39 @@ function criarServicoDeSalas({ repos, conf, barramento, limites, convidados,
          ------------------------------------------------------------------ */
       const usuario = await repos.usuarios.criarConvidado(sala.contexto_id, n.nome);
 
-      await repos.conversas.garantirMembro(sala.conversa_id, usuario.id);
-      await repos.chamadas.acrescentarParticipante(sala.chamada_id, usuario.id);
+      /* ==================================================================
+         O LINK DÁ ACESSO À FILA, NÃO À REUNIÃO
+
+         Aqui NÃO se entra na conversa nem na chamada. A pessoa ganha uma
+         identidade, um lugar na fila e uma sessão — e nada mais até alguém da
+         casa decidir.
+
+         A sessão sai agora de propósito: é ela que permite perguntar "e
+         então?" enquanto se espera. O portão de `rotas.js` já limita o que um
+         convidado alcança, e quem está na fila alcança menos ainda: não é
+         membro da conversa, e é a associação que abre a chamada.
+         ================================================================== */
+
+      /* ==================================================================
+         A FILA TAMBÉM TEM TETO
+
+         O freio por IP acima segura uma máquina insistindo. Não segura o caso
+         real: um link encaminhado a um grupo grande, e trinta pessoas pedindo
+         ao mesmo tempo. Sem teto, o painel de quem conduz vira uma lista
+         impossível de ler bem na hora em que ele precisa decidir rápido.
+
+         O teto é o dobro das vagas: sobra espaço para quem chegou junto, e
+         não para uma multidão. Quem excede ouve que a sala está cheia — que é
+         a verdade do ponto de vista dele.
+         ================================================================== */
+      const naFila = await repos.salas.quantosEsperando(sala.id);
+      if (naFila >= Math.max(10, Number(sala.max_convidados || 0) * 2))
+        throw erros.invalido(dom.RECUSAS.lotada);
 
       await repos.salas.registrarConvidado({
         salaId: sala.id, usuarioId: usuario.id, nome: n.nome, ipHash, agente,
+        estado: "esperando",
       });
-
-      const sessao = {
-        ehConvidado: true,
-        usuarioId: usuario.id,
-        salaId: sala.id,
-        conversaId: sala.conversa_id,
-        contextoId: sala.contexto_id,
-        nome: n.nome,
-        ehAdmin: false,
-        papel: "convidado",
-        sessaoId: "cvd:" + sala.id,
-      };
-
-      /* Entra na chamada pelo caminho normal: ele já é membro da conversa, e
-         `exigirMembro` passa sem exceção. */
-      const dados = await chamadas.entrar(sessao, sala.chamada_id);
 
       const cookie = convidados.abrir({
         usuarioId: usuario.id,
@@ -360,11 +371,21 @@ function criarServicoDeSalas({ repos, conf, barramento, limites, convidados,
 
       await repos.auditoria.registrar({
         contextoId: sala.contexto_id, usuarioId: usuario.id,
-        evento: "SALA_CONVIDADO_ENTROU", alvoTipo: "sala", alvoId: sala.id, ipHash,
+        evento: "SALA_PEDIDO_ENTRADA", alvoTipo: "sala", alvoId: sala.id, ipHash,
+      });
+
+      /* O pedido vai para quem CONDUZ. Não para todos que estão dentro: quem
+         não decide não precisa da fila ocupando a tela. */
+      barramento.emitir(EVENTOS.SALA_PEDIDO, {
+        contextoId: sala.contexto_id,
+        salaId: sala.id,
+        paraIds: [sala.criada_por],
+        convidado: { usuarioId: usuario.id, nome: n.nome, pediuEm: Date.now() },
       });
 
       return {
         cookies: cookie.cookies,
+        estado: "esperando",
         eu: { id: usuario.id, nome: n.nome, convidado: true },
         sala: {
           id: sala.id,
@@ -372,8 +393,76 @@ function criarServicoDeSalas({ repos, conf, barramento, limites, convidados,
           encerraEm: sala.encerra_em ? Number(sala.encerra_em) : null,
           duracaoMin: Number(sala.duracao_min),
         },
-        chamada: dados,
       };
+    },
+
+    /* ======================================================================
+       DECIDIR — a porta que só quem conduz abre
+       ====================================================================== */
+    async decidir(sessao, salaId, usuarioId, aceitar) {
+      exigirVideoLigado();
+      if (sessao.ehConvidado) throw erros.semPermissao();
+
+      const sala = await repos.salas.porId(sessao.contextoId, salaId);
+      if (!sala) throw erros.naoEncontrado();
+      if (sala.criada_por !== sessao.usuarioId && !sessao.ehAdmin)
+        throw erros.semPermissao("Só quem conduz a reunião decide quem entra.");
+
+      if (aceitar) {
+        /* A vaga é conferida NA APROVAÇÃO, e não no pedido: entre pedir e ser
+           aceito, a sala pode ter enchido. Aprovar sem conferir furaria o teto
+           pela porta de quem decide. */
+        const dentro = await repos.salas.quantosDentro(sala.id);
+        if (dentro >= Number(sala.max_convidados || 0))
+          throw erros.invalido(dom.RECUSAS.lotada);
+      }
+
+      if (!await repos.salas.decidirConvidado(sala.id, usuarioId, !!aceitar))
+        throw erros.invalido("Este pedido já foi decidido.");
+
+      if (aceitar) {
+        /* Só agora ele vira membro. Antes disso não havia o que revogar. */
+        await repos.conversas.garantirMembro(sala.conversa_id, usuarioId);
+        if (sala.chamada_id)
+          await repos.chamadas.acrescentarParticipante(sala.chamada_id, usuarioId);
+      }
+      /* ====================================================================
+         O COOKIE DO NEGADO SOBREVIVE — DE PROPÓSITO
+
+         O reflexo é matar a sessão na recusa. Mas as sessões de convidado moram
+         na memória deste processo, e a página de quem espera pergunta "e
+         então?" de dois em dois segundos. Sem cookie, essa pergunta volta 401
+         — que é a MESMA resposta de sessão expirada e de servidor reiniciado.
+         A tela não teria como distinguir "você foi recusado" de "caiu a rede",
+         e a pessoa ficaria esperando para sempre uma resposta que já veio.
+
+         Mantendo o cookie, `retomar` responde 403 com a razão, e a espera
+         termina. E o cookie sozinho não abre porta nenhuma: quem foi negado
+         nunca virou membro da conversa, e é a associação — não o cookie — que
+         `chamadas.entrar` exige. Ele carrega uma chave de uma fechadura que
+         não existe.
+         ==================================================================== */
+
+      await repos.auditoria.registrar({
+        contextoId: sala.contexto_id, usuarioId: sessao.usuarioId,
+        evento: aceitar ? "SALA_CONVIDADO_ENTROU" : "SALA_CONVIDADO_NEGADO",
+        alvoTipo: "sala", alvoId: sala.id, detalhe: usuarioId,
+      });
+
+      /* Sem aviso pelo socket para o convidado: ele não tem um. A página
+         dele pergunta de dois em dois segundos, e é por `retomar` que a
+         resposta chega — inteira, e mesmo que a rede tenha oscilado no
+         segundo exato em que este botão foi clicado. */
+      return { ok: true, aceito: !!aceitar };
+    },
+
+    /* A fila, para o painel de quem conduz. */
+    async pedidos(sessao, salaId) {
+      if (sessao.ehConvidado) throw erros.semPermissao();
+      const sala = await repos.salas.porId(sessao.contextoId, salaId);
+      if (!sala) throw erros.naoEncontrado();
+      if (sala.criada_por !== sessao.usuarioId && !sessao.ehAdmin) throw erros.semPermissao();
+      return { pedidos: await repos.salas.pendentes(sala.id) };
     },
 
     /* ======================================================================
@@ -455,8 +544,27 @@ function criarServicoDeSalas({ repos, conf, barramento, limites, convidados,
          numa reunião retomaria a sessão dentro de outra, com o código dela. */
       if (sessao.salaId !== sala.id) throw erros.semPermissao();
 
-      if (await repos.salas.foiExpulso(sala.id, sessao.usuarioId))
+      /* ==================================================================
+         ONDE ESTA PESSOA ESTÁ
+
+         `retomar` é a rota que a página do convidado consulta o tempo todo:
+         ao carregar, ao recarregar, e de segundo em segundo enquanto espera.
+         É por ela que a decisão do anfitrião chega.
+
+         Esperando não é erro — é uma resposta legítima, e precisa ser
+         distinguível de "não pode": a tela reage de formas opostas às duas.
+         ================================================================== */
+      const estado = await repos.salas.estadoDoConvidado(sala.id, sessao.usuarioId);
+      if (estado === "removido")
         throw erros.semPermissao("Você foi removido desta reunião.");
+      if (estado === "negado")
+        throw erros.semPermissao("Sua entrada não foi aprovada.");
+      if (estado === "esperando")
+        return {
+          estado: "esperando",
+          eu: { id: sessao.usuarioId, nome: sessao.nome, convidado: true },
+          sala: { id: sala.id, titulo: repos.salas.tituloDe(sala) },
+        };
 
       const podem = dom.podeEntrar(sala, {
         anfitriaoPresente: await anfitriaoPresente(sala),
@@ -475,6 +583,7 @@ function criarServicoDeSalas({ repos, conf, barramento, limites, convidados,
       const dados = await chamadas.entrar(sessao, sala.chamada_id);
 
       return {
+        estado: "dentro",
         eu: { id: sessao.usuarioId, nome: sessao.nome, convidado: true },
         sala: {
           id: sala.id,

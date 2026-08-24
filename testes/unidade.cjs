@@ -750,6 +750,99 @@ async function rodar() {
   }
 
   /* ======================================================================
+     O HISTÓRICO DE REUNIÕES NÃO OCUPA A LISTA
+
+     Sala encerrada e link revogado não têm ação nenhuma — nem copiar, porque
+     link encerrado copiado é link encerrado ENVIADO. São registro do que
+     houve, e registro não precisa estar na frente.
+
+     Deixados na lista, empurram para baixo as duas que ainda importam: depois
+     de um mês de uso, a aba abre num histórico onde a reunião de agora é a que
+     menos se vê. Apagá-los seria pior — é deles que sai "quem entrou naquela
+     consulta de terça".
+
+     Então ficam atrás de uma linha que diz quantos são, e o gesto é o MESMO das
+     conversas arquivadas, de propósito: quem aprendeu um não aprende o outro.
+     ====================================================================== */
+  P.secao("cliente: as reuniões encerradas ficam atrás de uma linha");
+
+  {
+    const fs5 = require("node:fs");
+    const path5 = require("node:path");
+    const publico5 = path5.join(__dirname, "..", "publico");
+    const video5 = fs5.readFileSync(path5.join(publico5, "la-chat-video.js"), "utf8");
+    const nucleo5 = fs5.readFileSync(path5.join(publico5, "la-chat.js"), "utf8");
+
+    const i = video5.indexOf("LaChat.prototype.pintarLista = function ()");
+    const pintar = i < 0 ? "" : video5.slice(i, i + 3000);
+    P.ok(i > 0, "achei a pintura da lista de reuniões");
+
+    P.ok(/estado === "encerrada"/.test(pintar) && /estado === "revogada"/.test(pintar),
+      "encerrada E revogada saem da lista principal — as duas acabaram");
+    P.ok(pintar.includes("verSalasEncerradas"),
+      "e ficam atrás de um interruptor, que lembra se foi aberto");
+    P.ok(/Encerradas \(/.test(pintar),
+      "a linha diz QUANTAS são — senão esconder vira apagar aos olhos de quem lê");
+
+    /* O MESMO GESTO DAS CONVERSAS. A classe vem do estilo do núcleo, no mesmo
+       shadow root: escrever outra aqui daria uma linha sem formato nenhum, que
+       ninguém reconheceria como clicável. */
+    P.ok(pintar.includes('classe: "arquivadas"'),
+      "reusando a classe das conversas arquivadas");
+    P.ok(nucleo5.includes(".arquivadas {"),
+      "que existe no estilo do núcleo — o mesmo shadow root");
+
+    /* A PROVA DE QUE O TESTE NÃO É VAZIO. */
+    const sabotado = pintar.split("verSalasEncerradas").join("naoExiste");
+    P.ok(!sabotado.includes("verSalasEncerradas"),
+      "e a trava acusa se o interruptor sumir");
+  }
+
+  /* ======================================================================
+     OS NOMES DOS AVISOS DA SALA — as duas pontas, o mesmo texto
+
+     Um aviso da sala atravessa três camadas antes de virar pixel: a aplicação
+     emite, o barramento repassa, o transporte embrulha num `{ t: "sala.x" }`,
+     e o cliente compara esse `t` com um texto escrito à mão.
+
+     Nada nesse caminho é verificado por ninguém. Escrever `sala.pedido` de um
+     lado e `sala.pedidos` do outro não quebra nada, não registra nada e não
+     estoura em lugar nenhum — o aviso simplesmente NÃO ACONTECE, e o defeito
+     aparece como "a funcionalidade não subiu".
+
+     Este projeto já pagou esse preço duas vezes (a capacidade perdida no passe,
+     e o evento de conversa removida fora da lista da auditoria). Então: tudo
+     que o transporte publica como `sala.*` tem de ser tratado no cliente.
+     ====================================================================== */
+  P.secao("cliente e servidor chamam os avisos da sala pelo mesmo nome");
+
+  {
+    const fs4 = require("node:fs");
+    const path4 = require("node:path");
+    const raiz = path4.join(__dirname, "..");
+    const transporte = fs4.readFileSync(
+      path4.join(raiz, "src", "infra", "realtime", "websocket.js"), "utf8");
+    const video = fs4.readFileSync(
+      path4.join(raiz, "publico", "la-chat-video.js"), "utf8");
+
+    const publicados = [...new Set(
+      [...transporte.matchAll(/t:\s*"(sala\.[a-z]+)"/g)].map((m) => m[1]))].sort();
+
+    P.ok(publicados.length >= 4,
+      "o transporte publica avisos de sala", publicados.join(", "));
+
+    for (const nome of publicados) {
+      P.ok(video.includes('"' + nome + '"'),
+        `o cliente trata \`${nome}\` — o nome bate dos dois lados`);
+    }
+
+    /* A PROVA DE QUE O TESTE NÃO É VAZIO: um nome que ninguém publica não
+       pode passar só porque o laço acima ficou vazio. */
+    P.ok(!video.includes('"sala.inventada"'),
+      "e a trava acusaria um nome que só existe de um lado");
+  }
+
+  /* ======================================================================
      MIGRAR O BANCO CERTO
 
      Num servidor com instâncias, cada cliente tem o próprio banco em

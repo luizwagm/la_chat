@@ -5,6 +5,108 @@ recurso, 3ª para correção. Nenhuma casa para no 9.
 
 ---
 
+## 0.22.0 — 24/08/2026 · o histórico sai da frente
+
+A aba **Reuniões** listava tudo que já existiu. Depois de um mês de uso ela abria
+num histórico onde a reunião de agora era a que menos se via.
+
+Sala encerrada e link revogado não têm ação nenhuma — nem copiar, porque link
+encerrado copiado é link encerrado **enviado**. São registro do que houve, e
+registro não precisa estar na frente. Apagá-los seria pior: é deles que sai "quem
+entrou naquela consulta de terça", e essa pergunta aparece depois, não durante.
+
+Agora somem da lista e ficam atrás de uma linha no fim — **▸ Encerradas (9)** —
+que abre e fecha. É o **mesmo gesto** das conversas arquivadas, de propósito: quem
+já aprendeu um não precisa aprender o outro.
+
+---
+
+## 0.21.0 — 24/08/2026 · a sala de espera
+
+O link deixou de abrir a porta. Agora ele dá acesso à **fila**: quem chega digita
+o nome e espera, e quem conduz aprova ou nega — com o nome à vista.
+
+### Por que
+
+Antes, a porta era aberta por **quem tem o endereço**, e não por quem conduz. Um
+link encaminhado a mais gente do que se pretendia, colado num grupo, ou
+simplesmente a pessoa errada na hora errada: em todos esses casos o anfitrião
+descobria a visita **vendo um rosto novo na tela**, no meio de uma consulta.
+
+Ele tinha o botão de remover. Remover depois não desfaz o que a pessoa já ouviu.
+
+### Como ficou
+
+**Para quem chega:** digita o nome, e cai numa tela de espera com a câmera
+**ligada** — de propósito: assim ela já se vê enquadrada, e não descobre um
+problema de vídeo depois de aprovada, na frente de todo mundo. Recarregar a
+página não perde o lugar na fila.
+
+**Para quem conduz:** uma batida na porta (um bipe só, não o toque que insiste) e
+um painel no alto da reunião com o nome, há quanto tempo espera, e **Aceitar** e
+**Negar**. O painel fica no fluxo da tela, e não como aviso que some sozinho: um
+pedido perdido deixa uma pessoa esperando indefinidamente do outro lado.
+
+**Negado:** a pessoa é informada na tela, com a razão. Não entra.
+
+### As bordas, que é onde porta vaza
+
+* **Quem espera não é membro de nada.** Não entra na conversa nem na chamada
+  enquanto não for aprovado — e a chamada exige a associação, não o cookie.
+* **O teto é conferido na APROVAÇÃO**, não no pedido. Entre pedir e ser aceito a
+  sala pode ter enchido; conferir só na entrada furaria o teto pela porta de
+  quem decide.
+* **A decisão não se desfaz.** Dois cliques no mesmo pedido, ou um "aceitar"
+  depois de um "negar", não reabrem o que já foi decidido.
+* **A fila tem teto** (o dobro das vagas, no mínimo 10). O freio por IP não pega
+  um link encaminhado a um grupo grande: são pessoas de verdade, cada uma do seu
+  endereço. Sem teto, o painel vira uma lista impossível de ler na hora em que
+  ele precisa decidir rápido.
+* **Só quem conduz decide.** Outro funcionário não vê a fila nem aprova; o
+  convidado, muito menos.
+* **O cookie de quem foi negado sobrevive** — e isso é deliberado. Matá-lo faria
+  a próxima pergunta da página voltar 401, que é a mesma resposta de sessão
+  expirada e de servidor reiniciado: a tela não distinguiria "você foi recusado"
+  de "caiu a rede", e a pessoa esperaria para sempre por uma resposta que já
+  veio. O cookie sozinho não abre porta nenhuma.
+
+### A decisão chega por pergunta, não por aviso
+
+A página de quem espera **pergunta** de dois em dois segundos. O socket entregaria
+mais rápido, mas ele é entrega ao vivo: se a conexão oscilar no segundo em que o
+anfitrião clicar, a resposta se perde — e esperar para sempre é justamente o que
+esta tela não pode fazer. (Quem conduz, esse sim, recebe pelo socket: ele já está
+numa chamada, com socket aberto.)
+
+### Uma trava nova, que já pegou um buraco
+
+Um aviso da sala atravessa três camadas até virar pixel, e o nome dele é **texto**
+em todas. Escrever diferente de um lado não quebra nada, não registra nada: o
+aviso simplesmente não acontece. A suíte agora confere que todo `sala.*`
+publicado pelo transporte é tratado no cliente — e na primeira execução acusou um
+evento que saía para um socket que não existe. Removido.
+
+### De quebra
+
+O botão do convidado diz **"Pedir para entrar"**, e não "Entrar": quem clica em
+"Entrar" e cai numa tela de espera acha que travou.
+
+E a aba **Reuniões** deixou de guardar o retrato antigo quando a chamada acaba.
+A sala continua ativa enquanto a chamada dela morre — são coisas diferentes — e a
+lista velha oferecia "Entrar", que levava a *"Esta chamada já terminou"*: o dono
+trancado do lado de fora da própria reunião, com o link já distribuído. Agora ela
+se atualiza no fim da chamada, e o botão vira **Reabrir sala**.
+
+### Banco
+
+Migração **007-espera**: `sala_convidados.estado` (`esperando` / `dentro` /
+`negado`) e `decidido_em`. O padrão da coluna é `dentro`, para que ninguém seja
+expulso de uma reunião em andamento no momento da migração.
+
+**713 testes** verdes.
+
+---
+
 ## 0.20.0 — 24/08/2026 · acrescentar tempo à reunião
 
 **40 minutos** entrou na lista de durações — é a consulta padrão de muita

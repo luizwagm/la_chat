@@ -99,6 +99,37 @@
   color: #f0c070; font-size: 13.5px;
 }
 .balao[hidden] { display: none; }
+
+/* ==========================================================================
+   A FILA DA PORTA
+
+   Fica no fluxo, acima da grade, e não como aviso que some sozinho: um pedido
+   perdido deixa uma pessoa esperando indefinidamente do outro lado, sem saber
+   se alguém a viu. Ele sai da tela quando for DECIDIDO, e não quando o tempo
+   passar.
+   ========================================================================== */
+.fila {
+  flex: none; margin: 0 12px 8px; padding: 10px 12px; border-radius: 10px;
+  background: rgba(88, 166, 255, .12); border: 1px solid rgba(88, 166, 255, .35);
+  display: flex; flex-direction: column; gap: 8px;
+}
+.fila > b { color: #9ecbff; font-size: 12.5px; font-weight: 600; }
+.fila .pedido {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  color: #e8eaee; font-size: 14px;
+}
+.fila .pedido .quem { flex: 1; min-width: 0; }
+.fila .pedido .quem b { font-weight: 600; }
+.fila .pedido .quem span { display: block; color: #8b96a5; font-size: 11.5px; }
+.fila .pedido button {
+  font: inherit; font-size: 13px; font-weight: 600; padding: 6px 14px;
+  border-radius: 7px; border: 0; cursor: pointer;
+}
+.fila .pedido button.aceitar { background: #2ea043; color: #fff; }
+.fila .pedido button.negar { background: transparent; color: #f0a0a0;
+  border: 1px solid rgba(248, 81, 73, .45); }
+.fila .pedido button:hover { filter: brightness(1.1); }
+.fila .pedido button:disabled { opacity: .5; cursor: default; }
 .balao b { color: #ffd591; font-weight: 600; }
 .balao .resta { font-variant-numeric: tabular-nums; }
 .balao form { display: flex; align-items: center; gap: 6px; margin-left: auto; }
@@ -424,6 +455,33 @@
       } catch { /* sem áudio: o aviso visual basta */ }
     },
     parar() { if (this.timer) { clearInterval(this.timer); this.timer = null; } },
+  };
+
+  /* Uma BATIDA NA PORTA: um bipe só, mais grave e mais curto que o toque.
+
+     A diferença é de intenção. O toque insiste porque uma chamada perdida é
+     uma chamada perdida. Um pedido de entrada não interrompe a reunião: avisa
+     uma vez, e o pedido fica na tela até alguém decidir. */
+  const batida = () => {
+    try {
+      const C = window.AudioContext || window.webkitAudioContext;
+      if (!C) return;
+      toque.ctx = toque.ctx || new C();
+      const ctx = toque.ctx;
+      if (ctx.state === "suspended") ctx.resume();
+      const t = ctx.currentTime;
+      for (const [atraso, hz] of [[0, 430], [0.12, 560]]) {
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.type = "sine";
+        o.frequency.setValueAtTime(hz, t + atraso);
+        g.gain.setValueAtTime(0.0001, t + atraso);
+        g.gain.exponentialRampToValueAtTime(0.04, t + atraso + 0.01);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + atraso + 0.11);
+        o.connect(g); g.connect(ctx.destination);
+        o.start(t + atraso); o.stop(t + atraso + 0.13);
+      }
+    } catch { /* sem áudio: o painel na tela basta */ }
   };
 
   /* ==========================================================================
@@ -902,6 +960,12 @@
           if (v.recebendo && m.id === v.recebendo.id) { v.recebendo = null; this.pintarToque(); }
           if (v.chamada && m.id === v.chamada.id) this.desmontarChamada(m.motivo);
           this.carregarConversas();
+          /* A SALA continua ativa quando a CHAMADA dela acaba — são coisas
+             diferentes. Sem esta linha a aba Reuniões guarda o retrato antigo e
+             oferece "Entrar", que leva a "Esta chamada já terminou": o dono
+             trancado do lado de fora da própria reunião, com o link já
+             distribuído. O botão certo, depois disto, é "Reabrir sala". */
+          if (this.estado.aba === "reunioes") this.carregarSalas?.();
           break;
         }
 
@@ -1050,6 +1114,11 @@
       clearTimeout(v.paciencia);
       v.paciencia = setTimeout(() => this.diagnosticarDemora(), 20000);
 
+      /* A fila de quem já estava esperando. O evento do socket só alcança
+         quem estava com a tela aberta na hora — quem abriu a sala noutro
+         aparelho, ou recarregou, precisa perguntar. */
+      this.carregarFila?.();
+
       await this.abrirCamera();
 
       /* Quem ENTROU oferece para quem já estava. Quem já estava recebe o
@@ -1184,6 +1253,9 @@
       if (!id) return;
       try { await this.api(`/chamadas/${id}/sair`, { metodo: "POST" }); } catch { }
       this.carregarConversas();
+      /* Sair sendo o último encerra a chamada, e a lista de reuniões passa a
+         mentir. Quem sai é justamente quem vai olhar essa lista em seguida. */
+      if (this.estado.aba === "reunioes") this.carregarSalas?.();
     },
 
     /* Desmonta TUDO. Chamado ao sair, ao receber `cham.fim` e ao fechar o
@@ -1328,6 +1400,9 @@
 
       if (alvo.dataset.aviso)
         alvo.appendChild(criar("div", { classe: "faixa-video", texto: alvo.dataset.aviso }));
+
+      const fila = this.painelDaFila?.();
+      if (fila) alvo.appendChild(fila);
 
       const balao = this.balaoDoFim?.();
       if (balao) alvo.appendChild(balao);
@@ -1820,8 +1895,94 @@
   LaChat.prototype.receber = function (m) {
     if (m?.t === "sala.aviso") return this.avisoDaSala(m);
     if (m?.t === "sala.prazo") return this.prazoDaSala(m);
+    if (m?.t === "sala.pedido") return this.pedidoDaSala(m);
     if (m?.t === "sala.fim") return this.fimDaSala(m);
     return receberDaSala.call(this, m);
+  };
+
+  /* ------------------------------------------------------------------------
+     ALGUÉM PEDIU PARA ENTRAR
+
+     Chega pelo socket, para quem conduz. A fila também é buscada ao montar a
+     reunião: quem abriu a sala num aparelho e a conduz noutro, ou recarregou a
+     página, precisa ver quem já estava esperando — o evento passou e não
+     volta.
+     ------------------------------------------------------------------------ */
+  LaChat.prototype.pedidoDaSala = function (m) {
+    const v = this.video;
+    if (!v || !m?.convidado?.usuarioId) return;
+    v.fila = v.fila || [];
+    if (!v.fila.some((p) => p.usuarioId === m.convidado.usuarioId)) {
+      v.fila.push(m.convidado);
+      /* Uma batida na porta. Quem conduz costuma estar olhando para quem fala,
+         e uma fila que só existe na tela é uma fila que ninguém vê. */
+      batida();
+    }
+    this.pintarChamada();
+  };
+
+  LaChat.prototype.carregarFila = async function () {
+    if (!this.sala?.souDono) return;
+    try {
+      const { pedidos } = await this.api("/salas/" + this.sala.id + "/pedidos");
+      const v = this.video;
+      if (!v) return;
+      v.fila = pedidos || [];
+      this.pintarChamada();
+    } catch { /* sem fila é o caso comum; falhar aqui não estraga a reunião */ }
+  };
+
+  LaChat.prototype.decidirPedido = async function (usuarioId, aceitar, botoes) {
+    for (const b of botoes) b.disabled = true;
+    try {
+      await this.api("/salas/" + this.sala.id + (aceitar ? "/aprovar/" : "/negar/") + usuarioId,
+        { metodo: "POST" });
+      const v = this.video;
+      if (v) v.fila = (v.fila || []).filter((p) => p.usuarioId !== usuarioId);
+      this.pintarChamada();
+    } catch (e) {
+      this.mostrarFaixa(e.message, true);
+      for (const b of botoes) b.disabled = false;
+    }
+  };
+
+  /* ------------------------------------------------------------------------
+     O PAINEL
+
+     Só para quem conduz. Quem não decide não precisa da fila ocupando a tela —
+     e o servidor recusa a decisão de qualquer forma.
+     ------------------------------------------------------------------------ */
+  LaChat.prototype.painelDaFila = function () {
+    const v = this.video;
+    const fila = v?.fila || [];
+    if (!fila.length || !this.sala?.souDono) return null;
+
+    const caixa = criar("div", { classe: "fila", role: "region",
+      "aria-label": "Pedidos para entrar na reunião" }, [
+      criar("b", { texto: fila.length === 1
+        ? "1 pessoa quer entrar" : fila.length + " pessoas querem entrar" }),
+    ]);
+
+    for (const pedido of fila) {
+      const espera = Math.max(0, Math.round((Date.now() - Number(pedido.pediuEm || 0)) / 1000));
+      const aceitar = criar("button", { classe: "aceitar", type: "button", texto: "Aceitar" });
+      const negar = criar("button", { classe: "negar", type: "button", texto: "Negar" });
+      const botoes = [aceitar, negar];
+      aceitar.onclick = () => this.decidirPedido(pedido.usuarioId, true, botoes);
+      negar.onclick = () => this.decidirPedido(pedido.usuarioId, false, botoes);
+
+      caixa.appendChild(criar("div", { classe: "pedido" }, [
+        criar("div", { classe: "quem" }, [
+          /* O nome foi DIGITADO por um estranho. Vai por textContent, como
+             todo texto de fora — é o menos confiável que esta tela exibe. */
+          criar("b", { texto: pedido.nome || "Alguém" }),
+          criar("span", { texto: espera > 5 ? "esperando há " + espera + "s" : "agora mesmo" }),
+        ]),
+        aceitar, negar,
+      ]));
+    }
+
+    return caixa;
   };
 
   LaChat.prototype.avisoDaSala = function (m) {
@@ -2093,7 +2254,45 @@
         texto: "Nenhum link criado ainda." }));
       return;
     }
-    for (const s of salas) lista.appendChild(this.linhaDeSala(s));
+
+    /* ======================================================================
+       O QUE ACABOU SAI DA FRENTE
+
+       Sala encerrada e link revogado não têm ação nenhuma — nem copiar. São
+       registro do que houve. Deixadas na lista, empurram para baixo as duas
+       ou três que ainda importam, e depois de um mês de uso a aba abre num
+       histórico onde a reunião de agora é a que menos se vê.
+
+       Apagá-las seria pior: é delas que sai "quem entrou naquela consulta de
+       terça", e essa pergunta aparece depois, não durante. Então somem da
+       lista principal e ficam atrás de uma linha no fim que diz quantas são —
+       o mesmo gesto das conversas arquivadas, e de propósito: quem já aprendeu
+       um não aprende o outro.
+       ====================================================================== */
+    const acabou = (s) => s.estado === "encerrada" || s.estado === "revogada";
+    const vivas = salas.filter((s) => !acabou(s));
+    const encerradas = salas.filter(acabou);
+
+    for (const s of vivas) lista.appendChild(this.linhaDeSala(s));
+
+    if (!vivas.length && encerradas.length)
+      lista.appendChild(criar("div", { classe: "carregando",
+        texto: "Nenhuma reunião em aberto." }));
+
+    if (encerradas.length) {
+      lista.appendChild(criar("button", {
+        classe: "arquivadas", type: "button",
+        "aria-expanded": String(!!this.estado.verSalasEncerradas),
+        texto: (this.estado.verSalasEncerradas ? "▾ " : "▸ ")
+          + "Encerradas (" + encerradas.length + ")",
+        onclick: () => {
+          this.estado.verSalasEncerradas = !this.estado.verSalasEncerradas;
+          this.pintarLista();
+        },
+      }));
+      if (this.estado.verSalasEncerradas)
+        for (const s of encerradas) lista.appendChild(this.linhaDeSala(s));
+    }
   };
 
   /* ------------------------------------------------------------------------

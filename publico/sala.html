@@ -217,21 +217,38 @@
       </div>
 
       <h1>Como quer ser chamado?</h1>
-      <p class="sub" id="nome-sub">Este nome aparece para todos na reunião.</p>
+      <p class="sub" id="nome-sub">É este nome que quem conduz a reunião vai ler
+        para aprovar sua entrada.</p>
 
       <form id="forma" novalidate>
         <label for="nome">Seu nome</label>
         <input type="text" id="nome" name="nome" autocomplete="name"
                maxlength="40" placeholder="Ex.: Maria Souza" required>
-        <button type="submit" class="principal" id="entrar">Entrar na reunião</button>
+        <!-- "Pedir para entrar", e não "Entrar": o botão promete o que
+             acontece. Quem clica em "Entrar" e cai numa tela de espera acha
+             que travou. -->
+        <button type="submit" class="principal" id="entrar">Pedir para entrar</button>
       </form>
 
       <div class="erro" id="nome-erro" hidden></div>
 
       <p class="rodape">
-        Ao entrar, seu nome e o horário ficam registrados para o anfitrião.
-        Nada é gravado.
+        Seu nome e o horário ficam registrados para o anfitrião. Nada é gravado.
       </p>
+    </div>
+  </section>
+
+  <!-- 4b. na fila, esperando alguém abrir a porta ----------------------- -->
+  <section class="tela" id="tela-fila">
+    <div class="cartao">
+      <div class="marca"><span class="ponto"></span> <span id="fila-titulo">Reunião</span></div>
+      <div class="pulso"></div>
+      <h1>Aguardando aprovação</h1>
+      <p class="sub">
+        <b id="fila-nome"></b>, seu pedido foi enviado a quem conduz a reunião.
+        Assim que ele aprovar, você entra automaticamente.
+      </p>
+      <p class="rodape">Pode deixar esta página aberta. Fechá-la cancela o pedido.</p>
     </div>
   </section>
 

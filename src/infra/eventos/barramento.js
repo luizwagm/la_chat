@@ -77,6 +77,14 @@ const EVENTOS = Object.freeze({
   /* ------------------------------------------------------------ sala por link
      O aviso dos últimos minutos e o encerramento saem do SERVIDOR, e não do
      relógio do navegador — que é do visitante e se adianta com um clique. */
+  /* Alguém pediu para entrar. Vai só para quem CONDUZ — os demais não
+     decidem nada, e a fila na tela deles seria ruído.
+
+     NÃO existe o aviso simétrico ("você foi aceito"), e a ausência é
+     deliberada: quem espera ainda não montou o chat, e portanto não tem
+     socket. O aviso sairia daqui para lugar nenhum. A decisão chega à tela
+     dele por PERGUNTA — ver `publico/sala.js`, `esperarDecisao`. */
+  SALA_PEDIDO: "sala.pedido",
   SALA_AVISO: "sala.aviso",
   /* O prazo mudou. Vai para TODOS que estão dentro — o relógio de cada tela
      precisa concordar, ou a reunião acaba antes do que uns estão vendo. */

@@ -38,6 +38,9 @@ const EVENTOS = new Set([
   "LIMITE_ATINGIDO", "ACESSO_NEGADO", "ORIGEM_RECUSADA",
   "CHAMADA_INICIADA", "CHAMADA_ENCERRADA", "CHAMADA_RECUSADA",
   "SALA_CRIADA", "SALA_REVOGADA", "SALA_CONVIDADO_ENTROU", "SALA_CONVIDADO_REMOVIDO",
+  /* Quem PEDIU e quem foi NEGADO. A recusa é a que mais importa: é a única
+     decisão do anfitrião que não deixa rastro nenhum na tela depois. */
+  "SALA_PEDIDO_ENTRADA", "SALA_CONVIDADO_NEGADO",
   "CONFIGURACAO_ALTERADA",
   /* Faltava desde a 1.2 do conector: a sincronização de elenco gravava, o
      evento não estava na lista, e o registro era DESCARTADO com um aviso no

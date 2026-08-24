@@ -60,6 +60,33 @@ function abaDeConvidado(base) {
   return aba;
 }
 
+/* ==========================================================================
+   ADMITIR — o atalho para "esta pessoa está dentro"
+
+   A porta passou a ter DUAS metades: pedir e ser aceito. Quase todo caso desta
+   suíte quer o resultado, não o caminho — testar a fila em cada um deles só
+   afogaria o que cada teste realmente prova.
+
+   Este atalho faz as duas metades e devolve exatamente o que o navegador tem
+   depois de aprovado: a resposta de `/eu`, que é onde a chamada vem. Quando
+   alguma das metades falha, devolve a falha — e a asserção do chamador acusa
+   no lugar certo.
+
+   A fila em si tem seção própria, e é lá que ela é interrogada.
+   ========================================================================== */
+async function admitir(anfitriao, aba, sala, nome) {
+  const pediu = await aba.vai(`/call/${sala.codigo}/entrar`, {
+    metodo: "POST", corpo: { nome },
+  });
+  if (pediu.status !== 200) return pediu;
+
+  const aprovou = await anfitriao.vai(
+    `/salas/${sala.id}/aprovar/${pediu.dados.eu.id}`, { metodo: "POST" });
+  if (aprovou.status !== 200) return aprovou;
+
+  return aba.vai(`/call/${sala.codigo}/eu`);
+}
+
 async function rodar() {
   const P = criarPlacar("Salas por link");
   const chat = await subirChat({ porta: 5284, origens: "http://127.0.0.1:5299", extra: VIDEO });
@@ -325,12 +352,54 @@ async function rodar() {
       metodo: "POST", corpo: { nome: " " },
     }), 400, "entrar sem nome é recusado");
 
-    const entrou = await convidado.vai(`/call/${sala.codigo}/entrar`, {
+    /* ==================================================================
+       O LINK DÁ ACESSO À FILA, NÃO À REUNIÃO
+
+       Antes, quem tinha o endereço entrava. Isto testa a inversão: quem abre
+       a porta é quem conduz, e a decisão é sobre um nome concreto.
+       ================================================================== */
+    const pediu = await convidado.vai(`/call/${sala.codigo}/entrar`, {
       metodo: "POST", corpo: { nome: "ZZ QA Visitante" },
     });
-    P.eq(entrou.status, 200, "o convidado entra digitando o nome");
+    P.eq(pediu.status, 200, "o convidado PEDE entrada digitando o nome");
+    P.eq(pediu.dados.estado, "esperando", "e fica na fila — o link sozinho não abre a porta");
+    P.ok(!pediu.dados.chamada, "sem chamada nenhuma enquanto espera");
+    P.ok(!!convidado.potes.get("cvd"),
+      "mas já ganha o cookie — é ele que permite perguntar pela decisão depois");
+
+    /* Quem espera não é membro de nada. Esta é a linha que separa a fila da
+       reunião: sem associação, `chamadas.entrar` não abre. */
+    const porFora = await convidado.vai(
+      `/chamadas/${aberta.dados.chamada.id}/entrar`, { metodo: "POST" });
+    P.ok(porFora.status >= 400,
+      "e NÃO entra na chamada por fora da fila", String(porFora.status));
+
+    const fila = await ana.vai(`/salas/${sala.id}/pedidos`);
+    P.eq(fila.status, 200, "o anfitrião vê a fila");
+    P.eq(fila.dados.pedidos.length, 1, "com uma pessoa esperando");
+    P.eq(fila.dados.pedidos[0].nome, "ZZ QA Visitante",
+      "e o nome que ela digitou, decifrado — é o que ele precisa ler para decidir");
+
+    P.recusa(await bruno.vai(`/salas/${sala.id}/pedidos`), 403,
+      "outro funcionário NÃO vê a fila de uma sala que não é dele");
+    P.recusa(await convidado.vai(`/salas/${sala.id}/pedidos`), 403,
+      "e o próprio convidado, muito menos");
+    P.recusa(await bruno.vai(`/salas/${sala.id}/aprovar/${pediu.dados.eu.id}`,
+      { metodo: "POST" }), 403, "nem aprova a entrada de ninguém");
+
+    const aprovou = await ana.vai(`/salas/${sala.id}/aprovar/${pediu.dados.eu.id}`,
+      { metodo: "POST" });
+    P.eq(aprovou.status, 200, "quem conduz aprova");
+
+    const entrou = await convidado.vai(`/call/${sala.codigo}/eu`);
+    P.eq(entrou.status, 200, "e aí sim o convidado entra");
+    P.eq(entrou.dados.estado, "dentro", "com o estado dizendo que a porta abriu");
     P.eq(entrou.dados.eu.convidado, true, "e é marcado como CONVIDADO");
     P.eq(entrou.dados.eu.nome, "ZZ QA Visitante", "com o nome que digitou");
+    P.eq(entrou.dados.eu.id, pediu.dados.eu.id,
+      "é a MESMA pessoa que pediu — aprovar não cria ninguém novo");
+    P.eq((await ana.vai(`/salas/${sala.id}/pedidos`)).dados.pedidos.length, 0,
+      "e a fila esvazia");
     P.ok(!!entrou.dados.chamada?.credenciais?.iceServers,
       "recebe credenciais de ICE para a mídia");
 
@@ -556,9 +625,8 @@ async function rodar() {
     P.secao("o teto de convidados");
 
     const c2 = abaDeConvidado(chat.base);
-    P.eq((await c2.vai(`/call/${sala.codigo}/entrar`, {
-      metodo: "POST", corpo: { nome: "ZZ QA Segundo" },
-    })).status, 200, "o segundo convidado entra (teto 2)");
+    P.eq((await admitir(ana, c2, sala, "ZZ QA Segundo")).status, 200,
+      "o segundo convidado entra (teto 2)");
 
     const c3 = abaDeConvidado(chat.base);
     P.recusa(await c3.vai(`/call/${sala.codigo}/entrar`, {
@@ -594,9 +662,8 @@ async function rodar() {
     await ana.vai(`/salas/${salaViva.id}/abrir`, { metodo: "POST" });
 
     const dentro = abaDeConvidado(chat.base);
-    P.eq((await dentro.vai(`/call/${salaViva.codigo}/entrar`, {
-      metodo: "POST", corpo: { nome: "ZZ QA Dentro" },
-    })).status, 200, "convidado entra na sala nova");
+    P.eq((await admitir(ana, dentro, salaViva, "ZZ QA Dentro")).status, 200,
+      "convidado entra na sala nova");
 
     await ana.vai(`/salas/${salaViva.id}`, { metodo: "DELETE" });
     await espera(400);
@@ -665,9 +732,7 @@ async function rodar() {
       await ana.vai(`/salas/${salaR.id}/abrir`, { metodo: "POST" });
 
       const aba = abaDeConvidado(chat.base);
-      const entrou1 = await aba.vai(`/call/${salaR.codigo}/entrar`, {
-        metodo: "POST", corpo: { nome: "ZZ QA Recarrega" },
-      });
+      const entrou1 = await admitir(ana, aba, salaR, "ZZ QA Recarrega");
       P.eq(entrou1.status, 200, "o convidado entra");
       const idPrimeiro = entrou1.dados.eu.id;
 
@@ -688,9 +753,8 @@ async function rodar() {
         JSON.stringify(dentro.map((c) => c.nome)));
 
       const outro = abaDeConvidado(chat.base);
-      P.eq((await outro.vai(`/call/${salaR.codigo}/entrar`, {
-        metodo: "POST", corpo: { nome: "ZZ QA Segundo" },
-      })).status, 200, "a segunda vaga continua disponível");
+      P.eq((await admitir(ana, outro, salaR, "ZZ QA Segundo")).status, 200,
+        "a segunda vaga continua disponível");
 
       /* Sem cookie não se retoma nada — é sessão, não é o código do link. */
       const semCookie = abaDeConvidado(chat.base);
@@ -755,9 +819,8 @@ async function rodar() {
       P.eq(reabriu.dados.codigo, salaV.codigo, "e o mesmo link, que já está com as pessoas");
 
       const convidadoTardio = abaDeConvidado(chat.base);
-      P.eq((await convidadoTardio.vai(`/call/${salaV.codigo}/entrar`, {
-        metodo: "POST", corpo: { nome: "ZZ QA Tardio" },
-      })).status, 200, "e quem tinha o link entra na reunião reaberta");
+      P.eq((await admitir(ana, convidadoTardio, salaV, "ZZ QA Tardio")).status, 200,
+        "e quem tinha o link entra na reunião reaberta");
     }
 
     /* ======================================================================
@@ -922,6 +985,141 @@ async function rodar() {
       P.eq(infoMorta.dados.ok, false, "o link continua morto");
 
       bd.close();
+    }
+
+    /* ======================================================================
+       A SALA DE ESPERA
+
+       A seção acima já provou o caminho feliz. Esta prova as bordas, que é
+       onde uma porta costuma vazar: a recusa, o clique duplo, o teto que
+       precisa ser conferido no momento de APROVAR — e não no de pedir.
+       ====================================================================== */
+    P.secao("a sala de espera");
+
+    {
+      const criadaE = (await ana.vai("/salas", {
+        metodo: "POST", corpo: { titulo: "ZZ QA Espera", duracaoMin: 30, maxConvidados: 2 },
+      })).dados;
+      await ana.vai(`/salas/${criadaE.id}/abrir`, { metodo: "POST" });
+
+      /* ------------------------------------------------------------------
+         O AVISO CHEGA PELO SOCKET
+
+         O painel do anfitrião é alimentado por um evento que atravessa três
+         camadas — aplicação, barramento, transporte — e cada uma delas usa o
+         nome do evento como texto. Já custou caro neste projeto: um nome
+         escrito diferente de um lado do limite não quebra nada, não registra
+         nada, e simplesmente não acontece.
+
+         Então o teste ouve o socket, como o navegador ouve.
+         ------------------------------------------------------------------ */
+      const bilheteAna = await ana.vai("/bilhete", { metodo: "POST" });
+      const wsAna = new WebSocket(
+        `ws://127.0.0.1:${chat.porta}/chat/ws?t=${encodeURIComponent(bilheteAna.dados.bilhete)}`,
+        { headers: { Origin: "http://127.0.0.1:5299" } });
+      const ouvidas = [];
+      wsAna.on("message", (d) => { try { ouvidas.push(JSON.parse(d.toString())); } catch { } });
+      wsAna.on("error", () => { });
+      await new Promise((r) => {
+        const t = setTimeout(r, 5000);
+        wsAna.on("open", () => { clearTimeout(t); r(); });
+        wsAna.on("unexpected-response", () => { clearTimeout(t); r(); });
+      });
+
+      /* ---------------------------------------------------------- a recusa */
+      const negado = abaDeConvidado(chat.base);
+      const pediuN = await negado.vai(`/call/${criadaE.codigo}/entrar`, {
+        metodo: "POST", corpo: { nome: "ZZ QA Nao Convidado" },
+      });
+      P.eq(pediuN.dados.estado, "esperando", "quem chega pelo link entra na fila");
+
+      await espera(400);
+      const aviso = ouvidas.find((m) => m.t === "sala.pedido");
+      P.ok(!!aviso, "o anfitrião é avisado pelo socket",
+        JSON.stringify(ouvidas.map((m) => m.t)));
+      P.eq(aviso?.convidado?.nome, "ZZ QA Nao Convidado",
+        "com o nome de quem quer entrar — é sobre ele que a decisão é");
+
+      P.eq((await ana.vai(`/salas/${criadaE.id}/negar/${pediuN.dados.eu.id}`,
+        { metodo: "POST" })).status, 200, "o anfitrião nega a entrada");
+
+      /* A resposta precisa CHEGAR a quem espera. Um 401 aqui — que é o que
+         sairia se a recusa matasse o cookie — seria indistinguível de rede
+         caída, e a pessoa esperaria para sempre por algo que já respondeu. */
+      const soube = await negado.vai(`/call/${criadaE.codigo}/eu`);
+      P.eq(soube.status, 403, "e quem foi negado SABE disso ao perguntar",
+        String(soube.status));
+      P.ok(/aprovad/i.test(JSON.stringify(soube.dados)),
+        "com a razão, e não um erro genérico", JSON.stringify(soube.dados));
+
+      P.recusa(await ana.vai(`/salas/${criadaE.id}/aprovar/${pediuN.dados.eu.id}`,
+        { metodo: "POST" }), 400,
+        "e o anfitrião não desfaz a recusa aprovando em seguida");
+
+      /* ------------------------------------------------- o clique repetido */
+      const bE = abaDeConvidado(chat.base);
+      const pediuB = await bE.vai(`/call/${criadaE.codigo}/entrar`, {
+        metodo: "POST", corpo: { nome: "ZZ QA Aceito" },
+      });
+      P.eq((await ana.vai(`/salas/${criadaE.id}/aprovar/${pediuB.dados.eu.id}`,
+        { metodo: "POST" })).status, 200, "outro é aprovado");
+      P.recusa(await ana.vai(`/salas/${criadaE.id}/aprovar/${pediuB.dados.eu.id}`,
+        { metodo: "POST" }), 400,
+        "aprovar duas vezes é recusado — dois cliques não gastam duas vagas");
+
+      /* ------------------------------------------------------------------
+         O TETO É CONFERIDO NA APROVAÇÃO
+
+         Entre pedir e ser aceito, a sala pode ter enchido. Conferir só na
+         hora do pedido furaria o teto pela porta de quem decide — e o
+         anfitrião não teria como saber, porque a tela dele mostraria os dois
+         pedidos lado a lado.
+         ------------------------------------------------------------------ */
+      const cE = abaDeConvidado(chat.base);
+      const dE = abaDeConvidado(chat.base);
+      const pediuC = await cE.vai(`/call/${criadaE.codigo}/entrar`, {
+        metodo: "POST", corpo: { nome: "ZZ QA Fila C" },
+      });
+      const pediuD = await dE.vai(`/call/${criadaE.codigo}/entrar`, {
+        metodo: "POST", corpo: { nome: "ZZ QA Fila D" },
+      });
+      P.eq(pediuC.status, 200, "com uma vaga sobrando, dois pedem ao mesmo tempo");
+      P.eq(pediuD.status, 200, "e os dois ficam na fila — pedir não reserva lugar");
+      P.eq((await ana.vai(`/salas/${criadaE.id}/pedidos`)).dados.pedidos.length, 2,
+        "o anfitrião vê os dois");
+
+      P.eq((await ana.vai(`/salas/${criadaE.id}/aprovar/${pediuC.dados.eu.id}`,
+        { metodo: "POST" })).status, 200, "o primeiro é aprovado e ocupa a última vaga");
+      P.recusa(await ana.vai(`/salas/${criadaE.id}/aprovar/${pediuD.dados.eu.id}`,
+        { metodo: "POST" }), 400,
+        "o segundo é recusado NA APROVAÇÃO — o teto não se fura por dentro");
+
+      try { wsAna.terminate(); } catch { }
+    }
+
+    /* ======================================================================
+       A FILA TAMBÉM TEM TETO
+
+       Um link encaminhado a um grupo grande enche o painel de quem conduz na
+       hora exata em que ele precisa decidir rápido. O freio por IP não pega
+       este caso: são pessoas de verdade, cada uma do seu endereço.
+       ====================================================================== */
+    {
+      const criadaF = (await ana.vai("/salas", {
+        metodo: "POST", corpo: { titulo: "ZZ QA Fila cheia", duracaoMin: 30, maxConvidados: 3 },
+      })).dados;
+      await ana.vai(`/salas/${criadaF.id}/abrir`, { metodo: "POST" });
+
+      let ultimo = null;
+      for (let i = 0; i < 11; i++) {
+        ultimo = await abaDeConvidado(chat.base).vai(`/call/${criadaF.codigo}/entrar`, {
+          metodo: "POST", corpo: { nome: "ZZ QA Multidao " + i },
+        });
+        if (ultimo.status !== 200) break;
+      }
+      P.recusa(ultimo, 400, "passado o teto da fila, o pedido é recusado");
+      P.eq((await ana.vai(`/salas/${criadaF.id}/pedidos`)).dados.pedidos.length, 10,
+        "e o painel do anfitrião para de crescer");
     }
 
     /* ====================================================================== */

@@ -1,8 +1,8 @@
 # Reunião por link — a sala anônima
 
 O anfitrião cria um link, define quanto tempo a reunião dura e manda para quem
-quiser. Quem recebe digita um nome e entra: **sem conta, sem senha, sem
-cadastro**.
+quiser. Quem recebe digita um nome e **pede para entrar**; quem conduz aprova ou
+nega. Sem conta, sem senha, sem cadastro — mas também sem porta automática.
 
 ```
 https://site-do-cliente.com/call/aBc9XyZ1qKm
@@ -23,7 +23,7 @@ A sala por link quebra isso **de propósito**. Ela cria três coisas que o chat
 não tinha:
 
 1. participante **não autenticado**;
-2. uma URL que **é** a credencial — quem tem o link, entra;
+2. uma URL que quase vira credencial — quem tem o link chega à porta;
 3. identidade **declarada pela própria pessoa** ("digite seu nome").
 
 Cada um é um risco. O que os contém:
@@ -41,6 +41,11 @@ ato deliberado, revisável de uma olhada.
 **Para a empresa, o convidado não existe.** A conta dele nasce marcada
 (`usuarios.convidado = 1`) e é excluída do diretório, da busca de pessoas e da
 criação de grupos. É defesa em profundidade — a proteção real é a de cima.
+
+**O link dá acesso à fila, não à reunião.** Quem abre a porta é quem conduz, e a
+decisão é sobre um nome concreto — não sobre "alguém tem o endereço". É o que
+transforma o item 2 acima de credencial em fila de espera. Ver **A sala de
+espera**, abaixo.
 
 **O código do link não é guardado em claro.** No banco ficam o SHA-256 (para
 achar a sala) e uma cópia cifrada (para o anfitrião reler o link). Um dump
@@ -164,6 +169,69 @@ permanente por esquecimento.
 
 ---
 
+## A sala de espera
+
+Quem chega pelo link digita o nome e cai numa **fila**. Quem conduz recebe uma
+batida na porta — um bipe só, não o toque que insiste — e um painel no alto da
+reunião com o nome, há quanto tempo a pessoa espera, e **Aceitar** / **Negar**.
+
+Antes disso, a porta era aberta por **quem tem o endereço**. Um link encaminhado
+a mais gente do que se pretendia, colado num grupo, ou simplesmente a pessoa
+errada na hora errada: em todos esses casos o anfitrião descobria a visita
+**vendo um rosto novo na tela**, no meio de uma consulta. Ele tinha o botão de
+remover — e remover depois não desfaz o que a pessoa já ouviu.
+
+Três estados, em `sala_convidados.estado`:
+
+| estado      | significa                                        |
+|-------------|--------------------------------------------------|
+| `esperando` | pediu, ninguém decidiu ainda                      |
+| `dentro`    | aprovado — está na reunião ou pode voltar a ela   |
+| `negado`    | recusado                                          |
+
+### O que sustenta a porta
+
+* **Quem espera não é membro de nada.** Só na aprovação ele entra na conversa e
+  na chamada. É a associação — não o cookie — que `chamadas.entrar` exige, então
+  não há caminho por fora da fila.
+* **O teto é conferido na aprovação**, e não no pedido: entre pedir e ser aceito a
+  sala pode ter enchido, e conferir só na entrada furaria o teto pela porta de
+  quem decide. Quem espera também **não ocupa vaga** — senão três pessoas na fila
+  lotariam uma sala vazia, e nenhuma delas poderia ser aprovada.
+* **A decisão não se desfaz.** O `UPDATE` exige `estado = 'esperando'`: dois
+  cliques, ou um "aceitar" depois de um "negar", não reabrem o que foi decidido.
+* **A fila tem teto** — o dobro das vagas, no mínimo 10. O freio por IP não pega
+  um link encaminhado a um grupo grande: são pessoas de verdade, cada uma do seu
+  endereço. Sem teto, o painel vira uma lista impossível de ler na hora em que
+  ele precisa decidir rápido.
+* **Só quem conduz decide.** Outro funcionário não vê a fila nem aprova.
+
+### A decisão chega por pergunta, não por aviso
+
+A página de quem espera **pergunta** `GET /call/<codigo>/eu` de dois em dois
+segundos. O socket entregaria mais rápido, mas ele é entrega ao vivo: se a
+conexão oscilar no segundo em que o anfitrião clicar, a resposta se perde — e
+esperar para sempre é justamente o que essa tela não pode fazer. Além disso, quem
+está na fila ainda **não montou o chat**, e portanto não tem socket nenhum.
+
+Quem conduz, esse sim, é avisado pelo socket (`sala.pedido`): ele já está numa
+chamada, com socket aberto. O painel dele também consulta `GET
+/salas/<id>/pedidos` ao montar a reunião — quem recarregou, ou conduz num
+aparelho e abriu no outro, precisa ver quem já estava esperando.
+
+> **O cookie de quem foi negado sobrevive**, e isso é deliberado. Matá-lo faria a
+> pergunta seguinte voltar `401` — que é a mesma resposta de sessão expirada e de
+> servidor reiniciado. A tela não distinguiria "você foi recusado" de "caiu a
+> rede", e a pessoa esperaria para sempre por uma resposta que já veio. Mantido o
+> cookie, `retomar` responde `403` com a razão. O cookie sozinho não abre porta
+> nenhuma: quem foi negado nunca virou membro.
+
+E a câmera fica **ligada** durante a espera, de propósito: a pessoa já se vê
+enquadrada, e não descobre um problema de vídeo depois de aprovada, na frente de
+todo mundo.
+
+---
+
 ## O que o anfitrião controla
 
 Na aba **Reuniões**:
@@ -171,6 +239,7 @@ Na aba **Reuniões**:
 * criar link, com assunto e duração;
 * **copiar o link** — também de dentro da reunião, pelo botão 🔗 no topo;
 * **abrir** e **reabrir** a sala;
+* **aprovar** ou **negar** quem está na fila, pelo nome;
 * ver **quem entrou**, com o nome digitado;
 * **remover** um convidado — e o cookie dele morre na hora, não na próxima
   recarga; o socket cai junto;
@@ -187,8 +256,9 @@ No celular a recarga acontece o tempo todo: girar a tela, trocar de aplicativo,
 o navegador descartar a aba em segundo plano.
 
 O cookie do convidado vale **4 horas** justamente para isto. `GET
-/call/<codigo>/eu` retoma a identidade que já existe, sem pedir o nome outra
-vez.
+/call/<codigo>/eu` retoma a identidade que já existe, sem pedir o nome outra vez
+— e devolve `estado`, que diz em qual das duas telas a pessoa cai: a fila ou a
+reunião. Recarregar no meio da espera **não perde o lugar**.
 
 Antes disso, cada recarga criava um convidado **novo**, com id novo, gastando
 mais uma vaga do teto — uma sala de cinco lugares se esgotava com **uma pessoa e
@@ -287,7 +357,7 @@ localmente pode não receber pacote nenhum da internet.
 
 ## O que a suíte cobre
 
-`testes/salas.cjs` — mais de 120 casos, e **metade deles não testa
+`testes/salas.cjs` — mais de 170 casos, e **metade deles não testa
 funcionalidade**: testa que o convidado bate na parede em todo lugar que não
 seja a reunião dele.
 
@@ -299,3 +369,14 @@ recusa é idêntica para inexistente e revogada; quatro recargas continuam sendo
 uma pessoa na sala; o prazo não estica ao reabrir; e o CSRF do convidado é o
 **dele**, não o do funcionário — este último custou uma tarde de investigação de
 rede num relay que estava perfeito.
+
+Da sala de espera: que quem espera não entra na chamada por fora; que o teto é
+conferido na aprovação e não no pedido; que aprovar duas vezes não gasta duas
+vagas; e que quem foi negado **sabe disso ao perguntar**, com a razão, em vez de
+receber um erro genérico indistinguível de rede caindo.
+
+E uma trava em `testes/unidade.cjs` amarra os **nomes dos avisos**: tudo que o
+transporte publica como `sala.*` tem de ser tratado no cliente. Um nome escrito
+diferente dos dois lados de um limite não quebra nada, não registra nada e não
+estoura em lugar nenhum — o aviso simplesmente não acontece. Na primeira
+execução, ela acusou um evento que saía para um socket inexistente.

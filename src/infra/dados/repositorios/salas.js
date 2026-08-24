@@ -186,16 +186,75 @@ function criar(Q) {
     /* ======================================================================
        CONVIDADOS
        ====================================================================== */
-    async registrarConvidado({ salaId, usuarioId, nome, ipHash, agente }) {
+    /* ====================================================================
+       O CONVIDADO NASCE ESPERANDO
+
+       O link dá acesso à FILA, não à reunião. Quem abre a porta é o anfitrião,
+       e a decisão dele é sobre um nome concreto — não sobre "alguém tem o
+       endereço".
+
+       `entrou_em` é gravado agora, e não na aprovação: é o instante em que a
+       pessoa PEDIU, e é dele que sai "esperando há dois minutos" na tela de
+       quem decide.
+       ==================================================================== */
+    async registrarConvidado({ salaId, usuarioId, nome, ipHash, agente, estado = "esperando" }) {
       const id = ulid();
       await Q.run(
-        `INSERT INTO sala_convidados (id, sala_id, usuario_id, nome, ip_hash, agente, entrou_em)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO sala_convidados (id, sala_id, usuario_id, nome, ip_hash, agente, entrou_em, estado)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         id, salaId, usuarioId, cripto.cifrar(String(nome || "")), ipHash,
         /* O agente é texto do cliente e pode vir com megabytes. Guardar sem
            teto é deixar o tamanho da tabela na mão de quem visita o link. */
-        String(agente || "").slice(0, 200), agora());
+        String(agente || "").slice(0, 200), agora(), estado);
       return id;
+    },
+
+    /* ====================================================================
+       A DECISÃO DO ANFITRIÃO
+
+       `WHERE estado = 'esperando'` não é enfeite: dois cliques no mesmo pedido
+       — ou um "aceitar" logo depois de um "negar" — não podem reabrir uma
+       decisão já tomada. Quem chega depois recebe `false` e a tela se acerta.
+       ==================================================================== */
+    async decidirConvidado(salaId, usuarioId, aceito) {
+      const r = await Q.run(
+        `UPDATE sala_convidados SET estado = ?, decidido_em = ?
+          WHERE sala_id = ? AND usuario_id = ? AND estado = 'esperando'`,
+        aceito ? "dentro" : "negado", agora(), salaId, usuarioId);
+      return r.linhas > 0;
+    },
+
+    async estadoDoConvidado(salaId, usuarioId) {
+      const r = await Q.get(
+        "SELECT estado, expulso FROM sala_convidados WHERE sala_id = ? AND usuario_id = ?",
+        salaId, usuarioId);
+      if (!r) return null;
+      return r.expulso ? "removido" : String(r.estado || "dentro");
+    },
+
+    /* Quantos esperam. Contagem, e não `pendentes().length`: quem chama isto é
+       a porta, a cada pedido, e decifrar trinta nomes para chegar a um número
+       é trabalho que o atacante escolheria de graça. */
+    async quantosEsperando(salaId) {
+      const r = await Q.get(
+        "SELECT COUNT(*) AS n FROM sala_convidados WHERE sala_id = ? AND estado = 'esperando'",
+        salaId);
+      return Number(r?.n || 0);
+    },
+
+    /* A fila. Nome decifrado, porque é o que o anfitrião precisa ler para
+       decidir — é exatamente para isso que ele foi pedido. */
+    async pendentes(salaId) {
+      const linhas = await Q.all(
+        `SELECT id, usuario_id, nome, entrou_em FROM sala_convidados
+          WHERE sala_id = ? AND estado = 'esperando' AND expulso = 0
+          ORDER BY entrou_em`, salaId);
+      return linhas.map((c) => ({
+        id: c.id,
+        usuarioId: c.usuario_id,
+        nome: cripto.decifrar(c.nome),
+        pediuEm: Number(c.entrou_em),
+      }));
     },
 
     async convidados(salaId) {
@@ -211,13 +270,18 @@ function criar(Q) {
         entrouEm: Number(c.entrou_em),
         saiuEm: c.saiu_em ? Number(c.saiu_em) : null,
         expulso: !!c.expulso,
+        estado: String(c.estado || "dentro"),
       }));
     },
 
     async quantosDentro(salaId) {
       const r = await Q.get(
         `SELECT COUNT(*) AS n FROM sala_convidados c
-          WHERE c.sala_id = ? AND c.saiu_em IS NULL AND c.expulso = 0`, salaId);
+          /* estado = dentro: quem está na FILA não ocupa vaga. Contá-lo
+           faria três pessoas esperando lotarem uma sala vazia — e o anfitrião
+           não teria como aprovar nenhuma delas. */
+        WHERE c.sala_id = ? AND c.saiu_em IS NULL AND c.expulso = 0
+          AND c.estado = 'dentro'`, salaId);
       return Number(r?.n || 0);
     },
 
