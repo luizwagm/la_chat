@@ -749,6 +749,65 @@ async function rodar() {
       "e a trava ACUSA se o aviso for removido do onopen");
   }
 
+  /* ======================================================================
+     MIGRAR O BANCO CERTO
+
+     Num servidor com instâncias, cada cliente tem o próprio banco em
+     /var/lib/lachat/<instancia>/chat.db. Rodar `npm run migrar` de dentro do
+     diretório do código, sem carregar o ambiente de nenhuma, usa o caminho
+     PADRÃO — e migra um banco avulso ali dentro.
+
+     O comando termina com "✓" em todas as migrações. O banco do cliente
+     continua exatamente como estava. E o sintoma aparece depois, na cara do
+     usuário, como uma funcionalidade que "não subiu".
+
+     Aconteceu em produção: as migrações 005 e 006 foram aplicadas ao banco
+     errado, e o profissional continuou sem ver a aba de reuniões.
+     ====================================================================== */
+  P.secao("migrar recusa o banco errado");
+
+  {
+    const fsm = require("node:fs");
+    const pathm = require("node:path");
+    const { conferirInstancia } = require(
+      pathm.join(__dirname, "..", "src", "infra", "dados", "migrar.js"));
+
+    const lerReal = fsm.readdirSync;
+    const comInstancias = (lista) => { fsm.readdirSync = (d, ...r) =>
+      d === "/etc" ? lista : lerReal(d, ...r); };
+    const sqliteAntes = process.env.CHAT_SQLITE;
+    const avulsoAntes = process.env.CHAT_MIGRAR_AVULSO;
+
+    try {
+      /* Um servidor com duas instâncias e ninguém carregou ambiente nenhum. */
+      comInstancias(["lachat-bemestar.env", "lachat-bordatudo.env", "passwd"]);
+      delete process.env.CHAT_SQLITE;
+      delete process.env.CHAT_MIGRAR_AVULSO;
+      P.ok(conferirInstancia() === false,
+        "com instâncias e sem ambiente, RECUSA — era isto que migrava o banco errado");
+
+      /* Com o ambiente carregado (o que o deploy faz), segue. */
+      process.env.CHAT_SQLITE = "/var/lib/lachat/bemestar/chat.db";
+      P.ok(conferirInstancia() === true, "com o ambiente da instância, segue");
+
+      /* Máquina de desenvolvimento: não há /etc/lachat-*.env, e nada barra. */
+      delete process.env.CHAT_SQLITE;
+      comInstancias(["passwd", "hosts"]);
+      P.ok(conferirInstancia() === true, "sem instâncias no servidor, segue (é desenvolvimento)");
+
+      /* E a saída explícita, para o banco de brinquedo de quem programa. */
+      comInstancias(["lachat-bemestar.env"]);
+      process.env.CHAT_MIGRAR_AVULSO = "1";
+      P.ok(conferirInstancia() === true, "e CHAT_MIGRAR_AVULSO=1 libera de propósito");
+    } finally {
+      fsm.readdirSync = lerReal;
+      if (sqliteAntes === undefined) delete process.env.CHAT_SQLITE;
+      else process.env.CHAT_SQLITE = sqliteAntes;
+      if (avulsoAntes === undefined) delete process.env.CHAT_MIGRAR_AVULSO;
+      else process.env.CHAT_MIGRAR_AVULSO = avulsoAntes;
+    }
+  }
+
   /* ====================================================================== */
   P.secao("tradução de SQL");
 

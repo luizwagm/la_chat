@@ -5,6 +5,33 @@ recurso, 3ª para correção. Nenhuma casa para no 9.
 
 ---
 
+## 0.19.1 — 23/08/2026 · migrar recusa o banco errado
+
+Aconteceu em produção. `npm run migrar` foi rodado de dentro do diretório do
+código, sem carregar o ambiente da instância — então ele usou o `CHAT_SQLITE`
+padrão e migrou um banco **avulso** em `LA-Chat/dados/chat.db`.
+
+O comando terminou com **✓ em todas as migrações**. O banco do BemEstar
+continuou exatamente como estava, e o profissional seguiu sem ver a aba de
+reuniões — um sintoma que parece código quebrado e é banco desatualizado.
+
+Dois sinais denunciam o engano, e os dois são conferíveis: existe pelo menos um
+`/etc/lachat-*.env` (logo, há instâncias) e o `CHAT_SQLITE` não foi informado
+(logo, ninguém carregou o ambiente de nenhuma). Agora o comando **recusa** e
+imprime o caminho certo, com o nome das instâncias que aquela máquina tem.
+
+`CHAT_MIGRAR_AVULSO=1` libera, para o banco de desenvolvimento de quem programa.
+
+E o `--status` parou de sugerir `npm run migrar` quando há migrações pendentes:
+num servidor com instâncias, esse é justamente o comando que erra o banco. Quem
+precisa do caminho certo o recebe na recusa.
+
+> Os avisos de segredo sorteado já estavam na tela naquele momento — eles são o
+> sinal de que nenhum ambiente foi carregado. Não bastaram: um aviso que não
+> impede continua sendo um aviso que se atravessa.
+
+---
+
 ## 0.19.0 — 23/08/2026 · o profissional também cria reunião
 
 Pedido: administração e profissional de saúde criam link de reunião; a recepção,

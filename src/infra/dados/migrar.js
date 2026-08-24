@@ -24,6 +24,7 @@
 "use strict";
 
 const { CONF } = require("../../../config.js");
+const fs = require("node:fs");
 const { abrir, agora } = require("./banco.js");
 
 /* A ordem é a do array, e não a ordem alfabética de arquivos numa pasta:
@@ -92,13 +93,74 @@ async function status() {
     console.log("");
     for (const m of MIGRACOES) console.log(`  ${feitas.has(m.versao) ? "✓" : "·"}  ${m.versao}`);
     const faltam = MIGRACOES.filter((m) => !feitas.has(m.versao)).length;
-    console.log(faltam ? `\n  ${faltam} migração(ões) pendente(s) — rode: npm run migrar\n` : "\n  Em dia.\n");
+    /* A dica NÃO diz mais "rode: npm run migrar". Num servidor com instâncias
+       esse é justamente o comando que migra o BANCO ERRADO — ver
+       `conferirInstancia`. Quem precisa do caminho certo o recebe lá, com o
+       nome das instâncias que existem naquela máquina. */
+    console.log(faltam ? `\n  ${faltam} migração(ões) pendente(s)\n` : "\n  Em dia.\n");
   } finally {
     await Q.fechar();
   }
 }
 
+/* ==========================================================================
+   O BANCO CERTO — a recusa que evita "migrei e não mudou nada"
+
+   Num servidor com instâncias, cada cliente tem o próprio banco em
+   `/var/lib/lachat/<instancia>/chat.db`, apontado pelo `CHAT_SQLITE` do
+   arquivo de ambiente dele. Rodar `npm run migrar` de dentro do diretório do
+   código, sem carregar esse ambiente, usa o caminho PADRÃO — e cria ou migra um
+   banco avulso ali dentro.
+
+   O comando termina com "✓" em todas as migrações. O banco do cliente continua
+   exatamente como estava. E o sintoma aparece depois, na cara do usuário, como
+   uma funcionalidade que "não subiu".
+
+   Dois sinais denunciam o engano, e os dois são conferíveis: existe pelo menos
+   um `/etc/lachat-*.env` (logo, há instâncias) e o `CHAT_SQLITE` não foi
+   informado (logo, ninguém carregou o ambiente de nenhuma).
+
+   `CHAT_MIGRAR_AVULSO=1` libera, para o caso legítimo de um banco de
+   desenvolvimento na máquina de quem programa.
+   ========================================================================== */
+function conferirInstancia() {
+  if (process.env.CHAT_SQLITE || process.env.CHAT_MIGRAR_AVULSO === "1") return true;
+  if (String(process.env.CHAT_BANCO || "sqlite") !== "sqlite") return true;
+
+  let instancias = [];
+  try {
+    instancias = fs.readdirSync("/etc")
+      .filter((f) => /^lachat-.+\.env$/.test(f))
+      .map((f) => f.replace(/^lachat-|\.env$/g, ""));
+  } catch { return true; }          // sem /etc legível: não é este servidor
+
+  if (!instancias.length) return true;
+
+  console.error(`
+  ✖ SEM O AMBIENTE DA INSTÂNCIA, ISTO MIGRARIA O BANCO ERRADO.
+
+    Este servidor tem ${instancias.length} instância(s): ${instancias.join(", ")}
+    Cada uma tem o próprio banco, e nenhum deles é o do diretório do código.
+
+    Rodando assim, as migrações seriam aplicadas a um banco avulso e o do
+    cliente continuaria atrasado — com "✓" em tudo na tela.
+
+    O jeito certo, para TODAS as instâncias:
+
+        sudo ${__dirname.replace(/src.*$/, "")}deploy.sh --atualizar-todas
+
+    Ou para UMA:
+
+        sudo sh -c 'set -a; . /etc/lachat-${instancias[0]}.env; set +a; \\
+          cd ${__dirname.replace(/[\\/]src[\\/].*$/, "")} && node src/infra/dados/migrar.js'
+
+    Se for mesmo um banco de desenvolvimento: CHAT_MIGRAR_AVULSO=1
+`);
+  return false;
+}
+
 if (require.main === module) {
+  if (!conferirInstancia()) { process.exitCode = 1; return; }
   const alvo = process.argv.includes("--status") ? status() : migrar();
   alvo.catch((e) => {
     /* Mensagem amigável na tela; detalhe técnico só no log (§57). Um `stack`
@@ -109,4 +171,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { migrar, status, MIGRACOES };
+module.exports = { migrar, status, MIGRACOES, conferirInstancia };
