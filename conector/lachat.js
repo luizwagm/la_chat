@@ -142,6 +142,15 @@ function conectorChat(opcoes = {}) {
          distância. Foi o que aconteceu na primeira versão desta linha. */
       sala: !!u.podeSala,
       ctx: String(u.contexto || contexto).slice(0, 60),
+      /* DE QUE VERSÃO ESTE PASSE VEIO.
+
+         O conector é um arquivo COPIADO para dentro de cada site. Uma cópia
+         atrasada continua funcionando — ela só deixa de mandar os campos que
+         nasceram depois dela, e a capacidade some sem erro nenhum: o botão
+         não aparece, e a causa está noutro repositório.
+
+         Com a versão no passe, o chat pode dizer isso em voz alta. */
+      cv: VERSAO_CONECTOR,
       iat,
       exp: iat + validadeSegundos,
       jti: crypto.randomBytes(16).toString("base64url"),

@@ -5,6 +5,29 @@ recurso, 3ª para correção. Nenhuma casa para no 9.
 
 ---
 
+## 0.19.2 — 23/08/2026 · o conector velho que some com capacidades
+
+O profissional continuava sem a aba, com o chat na 0.19.1 e as migrações em dia.
+A causa estava noutro repositório: **o conector dentro do BemEstar era a 1.5**, e
+ela não conhece o campo que carrega a capacidade.
+
+O conector é um arquivo COPIADO para dentro de cada hospedeiro. Uma cópia
+atrasada **não quebra nada** — ela apenas deixa de mandar os campos que nasceram
+depois dela. A capacidade some sem erro nenhum: o botão não aparece, o log fica
+limpo, e quem investiga procura no chat, que está certo.
+
+Agora o passe carrega a versão do conector que o emitiu (`cv`), e o chat
+**reclama uma vez por contexto** quando ela está atrás — dizendo o comando que
+resolve. Um aviso por subida, não por login: repetido, ele encheria o log e
+ensinaria a ser ignorado, que é o destino de todo aviso frequente.
+
+> Este é o terceiro defeito seguido do mesmo tipo: **o código certo no lugar
+> errado**. O passe com a chave trocada, a migração no banco avulso, o conector
+> atrasado. Nenhum deles dá erro; todos aparecem como funcionalidade que "não
+> subiu". As três travas novas existem para que a próxima diga onde olhar.
+
+---
+
 ## 0.19.1 — 23/08/2026 · migrar recusa o banco errado
 
 Aconteceu em produção. `npm run migrar` foi rodado de dentro do diretório do

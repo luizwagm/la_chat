@@ -198,6 +198,9 @@ function criarPasses({ segredo, validadeSegundos = 60 }) {
         jti: corpo.jti,
         expiraEm: corpo.exp * 1000,
         contexto: corpo.ctx || "padrao",
+        /* A versão do conector que emitiu este passe. Ausente = anterior à
+           1.6, quando o campo nasceu. */
+        versaoConector: String(corpo.cv || "") || null,
         usuario: {
           id: corpo.sub,
           identidade: corpo.ident || "",

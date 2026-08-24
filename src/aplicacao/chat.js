@@ -26,6 +26,44 @@ const texto = require("../dominio/texto.js");
 const arquivos = require("../dominio/arquivos.js");
 const { EVENTOS } = require("../infra/eventos/barramento.js");
 
+/* ==========================================================================
+   O SITE ESTÁ COM CONECTOR VELHO?
+
+   O conector é um arquivo COPIADO para dentro de cada hospedeiro. Uma cópia
+   atrasada não quebra nada — ela apenas deixa de mandar os campos que
+   nasceram depois dela. A consequência é uma capacidade que some sem erro
+   nenhum: o botão não aparece, o log fica limpo, e a causa está noutro
+   repositório.
+
+   Foi assim que a capacidade de criar reunião se perdeu: o chat na 0.19.0, o
+   site com o conector 1.5, e o profissional sem a aba. Duas rodadas de
+   investigação para descobrir que o arquivo certo estava no lugar errado.
+
+   O aviso sai UMA VEZ por contexto, por subida. Repetir a cada login encheria
+   o log e ensinaria a ignorá-lo — que é o destino de todo aviso frequente.
+   ========================================================================== */
+const VERSAO_CONECTOR_ESPERADA = "1.6";
+const jaAvisadoDoConector = new Set();
+
+function avisarSeConectorVelho(contexto, versao) {
+  if (jaAvisadoDoConector.has(contexto)) return;
+  const atual = String(versao || "");
+  const [aM, am] = atual.split(".").map(Number);
+  const [eM, em] = VERSAO_CONECTOR_ESPERADA.split(".").map(Number);
+  const velho = !atual || aM < eM || (aM === eM && am < em);
+  if (!velho) return;
+
+  jaAvisadoDoConector.add(contexto);
+  console.warn(
+    "\n  ⚠  CONECTOR DESATUALIZADO em \"" + contexto + "\" — " +
+    (atual || "anterior à 1.6") + " (esperado " + VERSAO_CONECTOR_ESPERADA + ")\n\n" +
+    "     Uma cópia atrasada do conector não quebra nada: ela só deixa de\n" +
+    "     mandar os campos novos, e a capacidade some sem erro — o botão não\n" +
+    "     aparece e o log fica limpo.\n\n" +
+    "     No projeto do chat:  node instalar-em.js ../<Projeto>\n" +
+    "     Depois: commit e deploy DO SITE.\n");
+}
+
 function criarServico({ repos, conf, barramento, limites, armazenamento, sessoes, passes, ipEmHash }) {
   const L = conf.limites;
 
@@ -193,6 +231,8 @@ function criarServico({ repos, conf, barramento, limites, armazenamento, sessoes
          pessoa — vazio aqui é "não sei", nunca "apague". Sem esta linha, cada
          login apagava o avatar que o elenco tinha acabado de sincronizar.
          Quem limpa foto é o ELENCO, que é o cadastro inteiro. */
+      avisarSeConectorVelho(conf1.contexto, conf1.versaoConector);
+
       const dadosDoPasse = { ...conf1.usuario };
       if (!dadosDoPasse.avatar) delete dadosDoPasse.avatar;
       const usuario = await repos.usuarios.garantir(conf1.contexto, dadosDoPasse);
