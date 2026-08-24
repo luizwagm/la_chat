@@ -56,7 +56,11 @@ function criar(Q) {
       if (!token) return null;
       const s = await Q.get(
         `SELECT s.id, s.usuario_id, s.expira_em, s.criada_em,
-                u.contexto_id, u.nome, u.sobrenome, u.avatar, u.papel, u.situacao
+                u.contexto_id, u.nome, u.sobrenome, u.avatar, u.papel, u.situacao,
+                /* A capacidade viaja com a sessão. Sem esta coluna, quem tem o
+                   direito no cadastro do cliente o veria no /eu e seria recusado
+                   na hora de usar — o botão aparecendo e a ação negada. */
+                u.pode_sala
            FROM sessoes s
            JOIN usuarios u ON u.id = s.usuario_id
           WHERE s.token_hash = ?`, hashDoToken(token));

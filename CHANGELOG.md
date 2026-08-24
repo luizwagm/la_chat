@@ -5,6 +5,58 @@ recurso, 3ª para correção. Nenhuma casa para no 9.
 
 ---
 
+## 0.19.0 — 23/08/2026 · o profissional também cria reunião
+
+Pedido: administração e profissional de saúde criam link de reunião; a recepção,
+não.
+
+### Uma capacidade, e não um papel novo
+
+O chat conhece **dois** papéis — `membro` e `admin` — e isso é deliberado: um
+papel livre vindo do hospedeiro viraria escalonamento de privilégio no dia em
+que o site do cliente tivesse um bug. Por isso o que não é "admin" vira
+"membro" na fronteira.
+
+Mas os clientes têm mais perfis que isso. A saída não é alargar o papel — é o
+hospedeiro declarar uma **capacidade**:
+
+    papel       "quem essa pessoa é no chat"        — fechado, dois valores
+    podeSala    "esta pessoa pode criar reunião?"   — sim ou não
+
+A diferença é o alcance do estrago. Um papel livre daria ao hospedeiro o poder
+de inventar privilégios que o chat não previu. Uma capacidade nomeada delega
+exatamente **uma** decisão — a que o cliente quis delegar —, e o pior que um site
+com defeito consegue é deixar alguém criar um link.
+
+Ela viaja no passe assinado e no elenco: quem deixa de ser profissional no
+cadastro do cliente perde o botão na próxima sincronização, sem ninguém lembrar
+de mexer no chat. E vem do passe, nunca do corpo do pedido — pedi-la numa
+requisição não a concede.
+
+No BemEstar, uma regra com nome (`PERFIS_COM_REUNIAO`) usada no login **e** no
+elenco. Duplicada, as duas divergiriam no dia em que um perfil novo aparecesse —
+e a divergência apareceria como "às vezes o botão some".
+
+### O defeito que só o e2e podia ver
+
+A primeira versão escreveu a chave como `podeSala` no conector e leu `sala` no
+chat. O passe saía **íntegro, assinado e válido** — e a capacidade simplesmente
+não chegava. Nada quebrava: o botão só não aparecia, e a causa ficava a dois
+arquivos de distância.
+
+A suíte de salas não pegou porque ela emite o passe do jeito do **servidor**. Só
+um teste que passa pelo conector podia ver a divergência, e agora há um: as duas
+chaves são comparadas, e nomes diferentes reprovam.
+
+### Também
+
+O `INSERT` de usuário novo e a consulta da sessão precisaram da coluna — os dois
+foram encontrados por teste vermelho, não por revisão. Sem o primeiro, a
+capacidade só valia no segundo login; sem o segundo, o botão aparecia e a ação
+era negada.
+
+---
+
 ## 0.18.1 — 23/08/2026 · a oferta que se perdia antes do socket abrir
 
 O relato: *"o anfitrião abre a reunião, os outros entram e fica conectando; aí o

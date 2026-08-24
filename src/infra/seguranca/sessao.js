@@ -180,6 +180,9 @@ function criarSessoes({ repo, segredo, cookie = "cid", duracaoHoras = 12, seguro
         avatar: s.avatar || "",
         papel: s.papel,
         ehAdmin: s.papel === "admin",
+        /* Capacidade, não papel: "pode criar reunião por link". Quem responde
+           por ela é o site do cliente, que conhece os próprios perfis. */
+        podeSala: !!s.pode_sala,
         /* Vai junto para o WebSocket poder morrer quando a sessão morrer. Um
            socket aceito no aperto de mão não reconsulta a sessão a cada
            evento; sem este valor ele viveria além dela. */

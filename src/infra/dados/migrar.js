@@ -35,6 +35,7 @@ const MIGRACOES = [
   require("./migracoes/003-chamadas.js"),
   require("./migracoes/004-salas.js"),
   require("./migracoes/005-arquivo.js"),
+  require("./migracoes/006-podesala.js"),
 ];
 
 async function garantirRegistro(Q) {

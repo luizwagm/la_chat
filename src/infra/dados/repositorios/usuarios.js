@@ -62,7 +62,7 @@ function avatarSeguro(url) {
    a lista de colegas não precisa dele, e mandá-lo espalharia dado pessoal por
    toda resposta que devolve uma pessoa. */
 const CAMPOS = `id, contexto_id, externo_id, identidade, nome, sobrenome, avatar, cargo,
-                departamento, papel, situacao, ultimo_acesso, criado_em`;
+                departamento, papel, situacao, pode_sala, ultimo_acesso, criado_em`;
 
 function paraFora(linha) {
   if (!linha) return null;
@@ -77,6 +77,10 @@ function paraFora(linha) {
     departamento: linha.departamento || "",
     papel: linha.papel,
     situacao: linha.situacao,
+    /* A capacidade vem do hospedeiro e é reescrita a cada login e a cada
+       sincronização de elenco: quem deixa de ser profissional lá deixa de
+       poder criar link aqui, sem ninguém lembrar de mexer no chat. */
+    podeSala: !!linha.pode_sala,
     ultimoAcesso: linha.ultimo_acesso || null,
     criadoEm: linha.criado_em,
     /* Só aparece quando a consulta pediu explicitamente. */
@@ -182,13 +186,14 @@ function criar(Q) {
         const gravar = async (comExterno) => Q.run(
           `UPDATE usuarios SET externo_id = ?, identidade = ?, nome = ?, sobrenome = ?,
                   email = ?, avatar = COALESCE(?, avatar), cargo = ?, departamento = ?, papel = ?,
-                  situacao = 'ativa', ultimo_acesso = ?, atualizado_em = ?
+                  pode_sala = ?, situacao = 'ativa', ultimo_acesso = ?, atualizado_em = ?
              WHERE id = ?`,
           comExterno, identidade || achado.identidade || "",
           dados.nome, dados.sobrenome || "", cripto.cifrar(dados.email || ""),
           dados.avatar === undefined ? null : avatarSeguro(dados.avatar),
           dados.cargo || "", dados.departamento || "",
-          dados.papel === "admin" ? "admin" : "membro", t, t, achado.id);
+          dados.papel === "admin" ? "admin" : "membro",
+          dados.podeSala ? 1 : 0, t, t, achado.id);
 
         try {
           await gravar(externo);
@@ -212,12 +217,16 @@ function criar(Q) {
       try {
         await Q.run(
           `INSERT INTO usuarios (id, contexto_id, externo_id, identidade, nome, sobrenome, email,
-                                 avatar, cargo, departamento, papel, situacao,
+                                 avatar, cargo, departamento, papel, pode_sala, situacao,
                                  ultimo_acesso, criado_em, atualizado_em)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ativa', ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ativa', ?, ?, ?)`,
           id, contextoId, externo, identidade, dados.nome, dados.sobrenome || "",
           cripto.cifrar(dados.email || ""), avatarSeguro(dados.avatar), dados.cargo || "",
-          dados.departamento || "", dados.papel === "admin" ? "admin" : "membro", t, t, t);
+          dados.departamento || "", dados.papel === "admin" ? "admin" : "membro",
+          /* Também na CRIAÇÃO, e não só no UPDATE: quem entra pela primeira vez
+             já tem perfil no cadastro do cliente, e esperar o segundo login
+             para a capacidade valer seria um defeito difícil de nomear. */
+          dados.podeSala ? 1 : 0, t, t, t);
 
         await Q.run(
           "INSERT INTO usuario_preferencias (usuario_id, atualizado_em) VALUES (?, ?)", id, t);

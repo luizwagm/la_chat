@@ -79,8 +79,15 @@ function criarServicoDeSalas({ repos, conf, barramento, limites, convidados,
          `revogar` e `expulsar`): tirar gente de uma reunião não pode
          depender de achar um administrador.
          ================================================================== */
-      if (!sessao.ehAdmin)
-        throw erros.semPermissao("Só um administrador pode criar link de reunião.");
+      /* Administrador SEMPRE pode. Além dele, quem o site do cliente
+         declarou — no BemEstar, o profissional de saúde; a recepção, não.
+
+         Os dois caminhos existem de propósito: o `ehAdmin` é do chat e não
+         depende de o hospedeiro ter sido atualizado; o `podeSala` é a
+         delegação. Um site que ainda não manda a bandeira continua com o
+         comportamento anterior, sem surpresa. */
+      if (!sessao.ehAdmin && !sessao.podeSala)
+        throw erros.semPermissao("Você não tem permissão para criar link de reunião.");
 
       /* Criar sala é barato para quem cria e caro para o servidor: cada uma é
          uma porta pública a mais. */

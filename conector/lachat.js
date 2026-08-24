@@ -40,7 +40,11 @@ const http = require("node:http");
 const https = require("node:https");
 const crypto = require("node:crypto");
 
-/* 1.5 — o LINK CURTO de reunião: `site.com/call/<codigo>` passa a ser
+/* 1.6 — `podeSala`: o site passa a declarar QUEM pode criar reunião por
+   link. O `papel` continua fechado em membro/admin — alargá-lo seria dar ao
+   hospedeiro o poder de inventar privilégios. Uma capacidade nomeada delega
+   uma decisão só.
+   1.5 — o LINK CURTO de reunião: `site.com/call/<codigo>` passa a ser
    atendido aqui e redirecionado para dentro do prefixo do chat. Sem isto o
    convite cai no 404 do site, porque a rota não existe lá. É o único caminho
    FORA do prefixo que o conector atende, e o padrão é estreito de propósito —
@@ -57,7 +61,7 @@ const crypto = require("node:crypto");
    `prefixoRemoto` de lá). Antes, montar o chat fora de `/chat` fazia o passe
    funcionar e todo o resto responder 404. É contrato: quem atualizar o
    conector ganha isso sem mexer em mais nada. */
-const VERSAO_CONECTOR = "1.5";
+const VERSAO_CONECTOR = "1.6";
 
 function conectorChat(opcoes = {}) {
   const alvo = String(opcoes.url || process.env.CHAT_URL || "").replace(/\/+$/, "");
@@ -127,6 +131,16 @@ function conectorChat(opcoes = {}) {
       cargo: String(u.cargo || "").slice(0, 120),
       departamento: String(u.departamento || "").slice(0, 120),
       papel: u.papel === "admin" ? "admin" : "membro",
+      /* A CAPACIDADE de criar reunião por link. O papel continua com dois
+         valores; esta bandeira é o que permite ao site distinguir perfis que o
+         chat não conhece — profissional pode, recepção não.
+
+         A CHAVE É `sala`, curta, porque é ela que o chat lê (`corpo.sala` em
+         seguranca/passe.js). Escrevê-la como `podeSala` aqui faz o passe sair
+         íntegro, assinado e válido — e a capacidade simplesmente não chegar.
+         Nada quebra: o botão só não aparece, e a causa fica a dois arquivos de
+         distância. Foi o que aconteceu na primeira versão desta linha. */
+      sala: !!u.podeSala,
       ctx: String(u.contexto || contexto).slice(0, 60),
       iat,
       exp: iat + validadeSegundos,

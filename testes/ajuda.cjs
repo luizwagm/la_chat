@@ -258,6 +258,9 @@ function emitirPasse(segredo, usuario, { contexto = "empresa-teste", validade = 
     nome: usuario.nome, sobrenome: usuario.sobrenome || "",
     email: usuario.email || "", avatar: usuario.avatar || "", cargo: usuario.cargo || "",
     departamento: usuario.departamento || "", papel: usuario.papel === "admin" ? "admin" : "membro",
+    /* A capacidade de criar reunião por link, declarada pelo hospedeiro.
+       Booleano forçado, como no passe de verdade. */
+    sala: !!usuario.podeSala,
     ctx: contexto, iat: agora, exp: agora + validade,
     jti: jti || crypto.randomBytes(16).toString("base64url"),
   };

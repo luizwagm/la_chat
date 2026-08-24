@@ -1894,7 +1894,10 @@
        Por isso a aba é acrescentada TAMBÉM ao fim de `iniciar()`, quando a
        identidade já se conhece — e esta função sai na hora se já tiver
        feito o serviço. */
-    if (el.estado?.eu && el.estado.eu.papel !== "admin") return;
+    /* Administrador ou quem o site declarou capaz. A tranca de verdade é a
+       do servidor; aqui é sobre não oferecer o que a pessoa não pode fazer. */
+    const podeCriar = (u) => u?.papel === "admin" || !!u?.podeSala;
+    if (el.estado?.eu && !podeCriar(el.estado.eu)) return;
     if (!el.estado?.eu) { el.__reunioes = false; return; }
 
     const b = criar("button", {

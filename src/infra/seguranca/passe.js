@@ -120,6 +120,22 @@ function criarPasses({ segredo, validadeSegundos = 60 }) {
            hospedeiro viraria escalonamento de privilégio se o site do cliente
            tivesse um bug — aqui, o que não for "admin" é "membro". */
         papel: usuario.papel === "admin" ? "admin" : "membro",
+        /* ==================================================================
+           A CAPACIDADE, e não um papel novo
+
+           O papel continua fechado em dois valores, pela razão de sempre. Mas
+           os clientes têm mais perfis do que isso, e alguns deles precisam
+           criar reunião por link.
+
+           Uma capacidade NOMEADA delega exatamente uma decisão — a que o
+           cliente quis delegar — em vez de dar ao hospedeiro o poder de
+           inventar privilégios que o chat não previu. O pior que um site com
+           defeito consegue aqui é deixar alguém criar um link.
+
+           Booleano forçado: qualquer coisa que venha do hospedeiro vira
+           `true` ou `false`, nunca um valor de confiança.
+           ================================================================== */
+        sala: !!usuario.podeSala,
         ctx: String(contexto).slice(0, 60),
         iat,
         exp: iat + validadeSegundos,
@@ -192,6 +208,7 @@ function criarPasses({ segredo, validadeSegundos = 60 }) {
           cargo: corpo.cargo || "",
           departamento: corpo.departamento || "",
           papel: corpo.papel === "admin" ? "admin" : "membro",
+          podeSala: !!corpo.sala,
         },
       };
     },

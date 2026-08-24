@@ -117,6 +117,10 @@ function criarServico({ repos, conf, barramento, limites, armazenamento, sessoes
           cargo: String(u.cargo || "").slice(0, 120),
           departamento: String(u.departamento || "").slice(0, 120),
           papel: u.papel === "admin" ? "admin" : "membro",
+          /* A capacidade vem junto do elenco, não só do login: quem deixou de
+             ser profissional no cadastro do cliente perde o botão na próxima
+             sincronização, sem precisar entrar de novo. */
+          podeSala: !!u.podeSala,
         });
         n++;
       }

@@ -326,6 +326,46 @@ async function rodar() {
     await chat.derrubar();
   }
 
+  /* ======================================================================
+     A CAPACIDADE ATRAVESSA O CONECTOR
+
+     `podeSala` nasce no site do cliente, vira um campo do passe assinado e
+     termina decidindo se a aba "Reuniões" existe. São três arquivos e duas
+     fronteiras.
+
+     A primeira versão escreveu a chave como `podeSala` no conector e leu
+     `sala` no chat. O passe saía íntegro, assinado e válido — e a capacidade
+     simplesmente não chegava. Nada quebrava: o botão só não aparecia, e a
+     causa ficava a dois arquivos de distância.
+
+     A suíte de salas não pegou porque ela emite o passe do jeito do SERVIDOR.
+     Só um teste que passa pelo conector podia ver a divergência — e é por isso
+     que este caso mora aqui.
+     ====================================================================== */
+  P.secao("a capacidade de criar reunião atravessa o conector");
+
+  {
+    /* Prova-se pelo texto dos dois lados: a chave que o conector ESCREVE no
+       passe tem de ser a mesma que o chat LÊ dele. */
+    const fs2 = require("node:fs");
+    const path2 = require("node:path");
+    const raiz = path2.join(__dirname, "..");
+    const fonte = fs2.readFileSync(path2.join(raiz, "conector", "lachat.js"), "utf8");
+    const leitor = fs2.readFileSync(
+      path2.join(raiz, "src", "infra", "seguranca", "passe.js"), "utf8");
+
+    const chaveEmitida = /(\w+):\s*!!u\.podeSala/.exec(fonte);
+    P.ok(!!chaveEmitida, "o conector emite a capacidade no passe", chaveEmitida?.[0]);
+
+    const chaveLida = /corpo\.(\w+)\s*[;,)]|!!corpo\.(\w+)/.exec(
+      (/podeSala:\s*!!corpo\.(\w+)/.exec(leitor) || [])[0] || "");
+    const nomeLido = (/podeSala:\s*!!corpo\.(\w+)/.exec(leitor) || [])[1];
+
+    P.ok(!!nomeLido, "e o chat lê alguma chave do corpo do passe", nomeLido);
+    P.eq(chaveEmitida?.[1], nomeLido,
+      "e as DUAS são a mesma — escrever nomes diferentes perde a capacidade em silêncio");
+  }
+
   return P.fim();
 }
 

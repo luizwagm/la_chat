@@ -85,9 +85,65 @@ async function rodar() {
        tem credencial nenhuma, com a banda e o nome da empresa atrás dela.
        Essa decisão pertence a quem responde pelo sistema.
        ================================================================== */
+    /* ==================================================================
+       QUEM CRIA REUNIÃO POR LINK
+
+       Criar um link é abrir uma porta que responde a quem não tem credencial
+       nenhuma, com a banda e o nome da empresa atrás dela. Não é decisão de
+       cada pessoa.
+
+       Mas também não é só do administrador: os clientes têm mais perfis do
+       que os dois papéis que o chat conhece. No BemEstar são três, e a
+       recepção não deve criar link enquanto o profissional de saúde deve.
+
+       Por isso a permissão tem DUAS portas:
+
+         · `ehAdmin`   — do chat, não depende de o hospedeiro ter mudado;
+         · `podeSala`  — a CAPACIDADE que o site declara, para os perfis que
+                        só ele conhece.
+
+       O papel continua fechado em membro/admin. Alargá-lo seria dar ao
+       hospedeiro o poder de inventar privilégios que o chat não previu; uma
+       capacidade nomeada delega exatamente uma decisão.
+       ================================================================== */
     P.recusa(await bruno.vai("/salas", {
       metodo: "POST", corpo: { titulo: "ZZ QA Do Bruno", duracaoMin: 30 },
-    }), 403, "funcionário comum NÃO cria link de reunião");
+    }), 403, "a RECEPÇÃO (membro sem a capacidade) NÃO cria link");
+
+    {
+      /* O profissional: membro comum, com a capacidade declarada pelo site. */
+      const profissional = await entrar(chat, {
+        id: "s-prof", nome: "ZZ QA Profissional", cargo: "Profissional de saúde",
+        papel: "membro", podeSala: true,
+      });
+
+      P.eq(profissional.usuario.papel, "membro",
+        "o profissional é membro comum — a capacidade não o promove");
+      P.eq(profissional.usuario.podeSala, true,
+        "mas o /eu diz que ele pode criar reunião (é o que acende a aba)");
+
+      const dele = await profissional.vai("/salas", {
+        metodo: "POST", corpo: { titulo: "ZZ QA Do Profissional", duracaoMin: 30 },
+      });
+      P.eq(dele.status, 200, "e ele CRIA o link");
+
+      /* A capacidade não vaza para mais nada. Ela responde uma pergunta só. */
+      P.recusa(await profissional.vai("/admin/auditoria"), 403,
+        "e continua sem alcançar a administração — a capacidade é uma só");
+
+      const salaDele = dele.dados;
+      P.recusa(await bruno.vai(`/salas/${salaDele.id}`, { metodo: "DELETE" }), 403,
+        "e a sala dele não é revogável por outro membro");
+
+      P.eq((await profissional.vai(`/salas/${salaDele.id}`, { metodo: "DELETE" })).status, 200,
+        "mas ele mesmo revoga a própria sala");
+
+      /* A recepção continua barrada mesmo mandando a bandeira no corpo — ela
+         vem do PASSE ASSINADO, não do pedido. */
+      P.recusa(await bruno.vai("/salas", {
+        metodo: "POST", corpo: { titulo: "ZZ QA Tentativa", duracaoMin: 30, podeSala: true },
+      }), 403, "e pedir a capacidade no corpo do pedido não a concede");
+    }
 
     const sala = criada.dados;
     P.eq(String(sala.codigo || "").length, 11, "o código tem 11 caracteres", sala.codigo);

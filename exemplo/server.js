@@ -76,8 +76,12 @@ const PESSOAS = {
          cargo: "Gerente de Operações", departamento: "Operações", papel: "admin" },
   bruno: { id: "func-002", nome: "Bruno", sobrenome: "Tavares", email: "bruno@empresa.com",
            cargo: "Analista", departamento: "Financeiro", papel: "membro" },
+  /* Carla é o caso que a capacidade existe para resolver: MEMBRO comum, sem
+     nenhum poder de administração, e ainda assim autorizada pelo hospedeiro a
+     criar reunião por link. No BemEstar é o profissional de saúde; a recepção
+     é o Bruno, que não tem a bandeira. */
   carla: { id: "func-003", nome: "Carla", sobrenome: "Menezes", email: "carla@empresa.com",
-           cargo: "Designer", departamento: "Marketing", papel: "membro" },
+           cargo: "Designer", departamento: "Marketing", papel: "membro", podeSala: true },
 };
 
 const apelidoDe = (req) =>
