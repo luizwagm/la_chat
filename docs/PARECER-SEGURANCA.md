@@ -1,6 +1,6 @@
-# Parecer de segurança — LA Chat 0.12.0
+# Parecer de segurança — LA Chat 0.18.0
 
-**23 de agosto de 2026 · 2ª emissão · revisão de código e leitura da suíte**
+**23 de agosto de 2026 · 3ª emissão · revisão de código, suíte e verificação externa**
 
 O sistema estava fechado: toda rota exigia sessão de funcionário. A reunião por
 link abriu a primeira porta que responde a quem não tem credencial nenhuma. Este
@@ -8,7 +8,7 @@ parecer avalia o conjunto e, principalmente, o que essa porta mudou.
 
 ---
 
-## Grau: **A−** — firme, com uma pendência real
+## Grau: **A** — firme, sem pendência de código
 
 A base é forte e incomum: **uma dependência de produção**, zero vulnerabilidades
 conhecidas, cifra autenticada em repouso, e defesas escritas contra ataques
@@ -19,9 +19,14 @@ Desde a 1ª emissão: os **anexos passaram a ser cifrados em disco** (A3) e **to
 reunião por link vai pelo relay** (A2), de modo que ninguém descobre o endereço
 de ninguém. No caminho apareceu um quarto defeito (A7), também corrigido.
 
-Sobra **uma pendência de verdade**, e ela não é de código: **o TURN continua sem
-existir**. Enquanto isso, o vídeo não deve ser ligado — sem relay a reunião falha
-em rede corporativa; com relay mal configurado, vira túnel para dentro do servidor.
+O **relay foi instalado e verificado de fora** (A1): UDP, TCP e TLS alocam, com
+certificado válido do Let's Encrypt e as travas de rede no lugar. A reunião por
+link foi provada atravessando redes distintas — computador e celular em rede
+móvel.
+
+Não sobra pendência de código. Sobram os limites inerentes, declarados abaixo:
+a chave mora ao lado do que protege (A4) e não há E2EE (A5) — os dois por
+decisão, não por esquecimento.
 
 | Área | Grau | Fundamento |
 |---|---|---|
@@ -32,7 +37,7 @@ em rede corporativa; com relay mal configurado, vira túnel para dentro do servi
 | Dados em repouso | Alto | Banco **e anexos** em AES-256-GCM, com selo que preserva o que já estava no disco. |
 | Privacidade da mídia | Alto | Reunião por link vai pelo relay: nem o convidado vê o IP de dentro, nem o contrário. |
 | Prazo da reunião | Alto | Decidido pelo relógio do servidor, igual para os dois lados. Encerrada não reabre. |
-| Infraestrutura de mídia | **Pendente** | TURN não instalado. Ao instalar, torna-se o item mais sensível. |
+| Infraestrutura de mídia | Alto | coturn com credencial temporária, `no-cli` e faixas privadas negadas (IPv4 e IPv6). Verificado de fora. |
 | Confidencialidade fim a fim | Por decisão | Sem E2EE (ver D2). O servidor pode ler as mensagens. |
 
 ---
@@ -64,7 +69,7 @@ acertou um código, e é assim que tentativa e erro vira mapa.
 
 Cada um verificado no código. Nenhum é suspeita.
 
-### A1 · O TURN é a peça mais perigosa, e ainda não existe — **grave ao ligar**
+### A1 · O TURN é a peça mais perigosa — **resolvido (0.18.0)**
 
 Hoje `CHAT_TURN` está vazio: de 15% a 20% das chamadas vão falhar, concentradas
 em rede corporativa. Isso é qualidade. O problema de *segurança* nasce no dia em
@@ -75,10 +80,17 @@ rede, quem tem um convite ganha um túnel para dentro da rede privada do servido
 > `src/aplicacao/salas.js` → `chamadas.entrar()` → `turn.credenciais()`
 > o convidado recebe `iceServers` ao entrar — por desenho, ele precisa deles.
 
-**Fazer:** em `/etc/turnserver.conf`, `use-auth-secret`, `no-loopback-peers` e as
-quatro linhas de `denied-peer-ip` (10/8, 172.16/12, 192.168/16, 169.254/16). Já
-estão escritas em `docs/VIDEO.md`. **Não são opcionais.** A credencial expira em
-2 h e é derivada por HMAC — vazou, morre sozinha.
+**Feito:** `criar-relay.sh` instala e endurece o coturn numa passada —
+`use-auth-secret`, `no-loopback-peers`, `no-cli` (o console telnet que vem ligado
+por padrão) e **doze** faixas privadas negadas, IPv6 incluído. O gancho de
+renovação reinicia o coturn quando o certificado renova: sem ele, o relay
+serviria um certificado vencido a partir do 90º dia, e o sintoma chegaria muito
+depois da instalação.
+
+Verificado **de fora**, da máquina de um usuário: alocação concedida por UDP, por
+TCP e por TLS, pelo nome, com a mesma conta HMAC que o chat faz. O `verificar.sh`
+passou a repetir esse teste — e a dizer que ele mede de dentro, porque um relay
+que autentica localmente pode não receber pacote nenhum da internet.
 
 ### A2 · Numa sala anônima, os dois lados veem o IP um do outro — **corrigido (0.12.0)**
 

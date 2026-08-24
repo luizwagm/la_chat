@@ -5,6 +5,46 @@ recurso, 3ª para correção. Nenhuma casa para no 9.
 
 ---
 
+## 0.18.0 — 23/08/2026 · a reunião por link, funcionando e documentada
+
+**Provada atravessando redes distintas** — computador e celular em rede móvel.
+Foi o teste que faltava: duas abas na mesma máquina conectam por candidatos
+locais e não exercitam travessia nenhuma.
+
+O aparelho que falhava tinha um intermediário no Wi-Fi (VPN, proxy ou economia
+de dados); pelos dados móveis, conectou. E a própria tela passou a dizer isso,
+em vez de "conectando…" para sempre.
+
+### `docs/SALAS.md`
+
+A referência da funcionalidade: o que ela muda no modelo de segurança, o
+alfabeto do código e por que as três recusas são a mesma frase, o porquê de o
+anfitrião precisar estar presente, o tempo e as garantias dele, a privacidade do
+IP, a instalação com os três transportes, e o que a suíte cobre.
+
+### A faixa da tela ficou curta
+
+Ela mostrava os endereços dos servidores e o texto do navegador — *"Address not
+associated with the desired network interface"* — ocupando a faixa inteira com
+algo que não diz nada a quem está numa reunião, e assusta.
+
+A pessoa precisa saber **duas** coisas: que não conectou, e o que pode fazer:
+
+* *"Sua rede não está alcançando o servidor de vídeo. Tente por outra rede."*
+* *"O servidor de relay recusou a credencial. Avise quem cuida do servidor."*
+
+O resto é para quem vai consertar, e continua em `video.errosIce` — sem ocupar
+espaço na cara de ninguém.
+
+### Parecer reemitido em **A**
+
+O achado A1 (TURN) foi fechado: relay instalado, endurecido e **verificado de
+fora** — UDP, TCP e TLS alocam, pelo nome, com certificado válido. Não sobra
+pendência de código; sobram os limites declarados (a chave mora ao lado do que
+protege, e não há E2EE) — os dois por decisão, não por esquecimento.
+
+---
+
 ## 0.17.1 — 23/08/2026 · "conectando…" passa a dizer o motivo
 
 Num celular não há console. A pessoa via "conectando…" e mais nada — sem

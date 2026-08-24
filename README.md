@@ -209,6 +209,8 @@ que valem a leitura antes da primeira subida:
 | [docs/DATABASE.md](docs/DATABASE.md) | esquema, índices e o porquê de cada um |
 | [docs/REALTIME.md](docs/REALTIME.md) | protocolo, presença, reconexão |
 | [docs/VIDEO.md](docs/VIDEO.md) | reunião: malha, teto, TURN e o que não existe |
+| [docs/SALAS.md](docs/SALAS.md) | reunião por LINK: o convidado sem conta, e o que o contém |
+| [docs/PARECER-SEGURANCA.md](docs/PARECER-SEGURANCA.md) | avaliação de segurança, com achados e pendências |
 | [docs/STORAGE.md](docs/STORAGE.md) | anexos e a troca por S3 |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | systemd, nginx, TLS |
 | [docs/TESTING.md](docs/TESTING.md) | como as suítes são escritas |

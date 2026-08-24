@@ -923,30 +923,28 @@
         aoMudar: () => this.agendarPintura(),
         aoErro: (e) => {
           if (window.CHAT_DEBUG) console.warn("webrtc:", e?.message || e);
-          /* Erro de ICE com diagnóstico vai para a TELA. O resto continua no
-             console: ruído de negociação não interessa a quem está reunido. */
-          if (e?.silencioso || e?.codigoIce) {
-            /* O registro fica no componente, para quem for diagnosticar:
-                 document.querySelector("la-chat").video.errosIce          */
+
+          /* ==================================================================
+             ERRO DE CANDIDATO É REGISTRO, NUNCA AVISO.
+
+             `onicecandidateerror` dispara por servidor e por tentativa. Numa
+             lista com STUN e TURN, UDP, TCP e TLS, é normal alguma entrada
+             falhar enquanto outra funciona e a chamada conecta.
+
+             Fica guardado para quem for diagnosticar — e o lugar dele é o
+             console, não a cara de quem está reunido:
+
+                 document.querySelector("la-chat").video.errosIce
+             ================================================================== */
+          if (e?.registro) {
             const v = this.video;
             if (v) {
               v.errosIce = v.errosIce || [];
               if (v.errosIce.length < 10) v.errosIce.push(e.registro);
             }
-            /* A URL entra na frase: sem ela, "não falei com o relay" manda
-               investigar o relay mesmo quando quem falhou foi outro endereço
-               da lista — um STUN, por exemplo. */
-            if (!e.silencioso) {
-              const onde = e.registro?.url ? " (" + e.registro.url + ")" : "";
-              this.avisoDeVideo(e.message + onde);
-              clearTimeout(this._avisoIce);
-              this._avisoIce = setTimeout(() => this.avisoDeVideo(""), 20000);
-            }
           }
 
-          /* A FALHA DE CONEXÃO — esta sim vai para a tela, e traz junto o
-             resumo do que foi tentado, que é o que permite diagnosticar sem
-             abrir o console. */
+          /* A FALHA DE CONEXÃO — esta sim fala com a pessoa, em uma frase. */
           if (e?.falhaDeConexao) this.recuarDoRelay(e);
         },
       });
@@ -2267,9 +2265,6 @@
     if (!travados.length) return;   // conectou: nada a dizer
 
     const erros = v.errosIce || [];
-    const porUrl = new Map();
-    for (const e of erros) if (!porUrl.has(e.url)) porUrl.set(e.url, e);
-
     /* A conclusão vem do PADRÃO dos erros, não do último deles. */
     const tudoExpirou = erros.length > 0 && erros.every((e) => /timed out|time out/i.test(e.texto || ""));
     const recusou = erros.some((e) => e.codigo === 401 || e.codigo === 403);
@@ -2286,11 +2281,18 @@
       frase = "A conexão de vídeo não fechou.";
     }
 
-    const detalhe = [...porUrl.values()]
-      .map((e) => (e.url || "?").replace(/^turns?:/, "").split("?")[0] + ": " + (e.texto || e.codigo))
-      .slice(0, 3).join(" · ");
+    /* ==================================================================
+       O DETALHE TÉCNICO NÃO VAI PARA A TELA.
 
-    this.avisoDeVideo(frase + (detalhe ? "  (" + detalhe + ")" : ""));
+       Endereços de servidor e mensagens do navegador — "Address not
+       associated with the desired network interface" — não dizem nada a quem
+       está numa reunião, e ocupam a faixa inteira com um texto que assusta.
+
+       A pessoa precisa saber DUAS coisas: que não conectou, e o que ela pode
+       fazer. O resto é para quem vai consertar, e continua guardado em
+       `video.errosIce` — sem ocupar espaço na cara de ninguém.
+       ================================================================== */
+    this.avisoDeVideo(frase);
 
     /* Pergunta de novo mais adiante: redes ruins às vezes fecham em 40 s, e
        nesse caso o aviso precisa sair da tela. */
@@ -2308,12 +2310,8 @@
     const v = this.video;
     if (!v?.malha) return;
 
-    const tentados = (v.errosIce || [])
-      .map((r) => r.codigo + " em " + (r.url || "?")).slice(0, 3).join("; ");
-
     if (v.recuou || v.malha.politicaAtual() !== "relay") {
-      this.avisoDeVideo((erro?.message || "A conexão falhou.")
-        + (tentados ? " Tentativas: " + tentados : ""));
+      this.avisoDeVideo(erro?.message || "A conexão falhou.");
       clearTimeout(this._avisoIce);
       this._avisoIce = setTimeout(() => this.avisoDeVideo(""), 25000);
       return;
