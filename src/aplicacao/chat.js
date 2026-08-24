@@ -601,6 +601,63 @@ function criarServico({ repos, conf, barramento, limites, armazenamento, sessoes
       return semEu;
     },
 
+    /* ======================================================================
+       ARQUIVAR — para mim, e para mais ninguém
+
+       Some da MINHA lista. Os colegas continuam vendo a conversa como antes,
+       e a próxima mensagem a traz de volta para todo mundo que a arquivou
+       (ver `desarquivarTodos` no repositório).
+
+       Não confundir com SILENCIAR, que já existia: aquela cala o aviso e
+       mantém a conversa na lista. São dois desejos diferentes — "não me
+       avise" e "tire da frente".
+       ====================================================================== */
+    async arquivarConversa(sessao, conversaId, arquivar) {
+      if (sessao.ehConvidado) throw erros.semPermissao();
+      const membro = await repos.conversas.membroDe(sessao.contextoId, conversaId, sessao.usuarioId);
+      if (!membro) throw erros.naoEncontrado();
+      await repos.conversas.arquivar(conversaId, sessao.usuarioId, !!arquivar);
+      return { ok: true, arquivada: !!arquivar };
+    },
+
+    /* ======================================================================
+       REMOVER — a conversa inteira, e só o administrador
+
+       É a única operação deste chat que age sobre o histórico dos OUTROS.
+       Por isso: exige administrador, avisa todo mundo que estiver com ela
+       aberta, e fica na auditoria com quem fez.
+
+       E NÃO APAGA LINHA NENHUMA — marca. A conversa e as mensagens continuam
+       no banco, invisíveis. Um clique errado aqui não pode ser definitivo.
+       ====================================================================== */
+    async removerConversa(sessao, conversaId) {
+      if (sessao.ehConvidado) throw erros.semPermissao();
+      if (!sessao.ehAdmin)
+        throw erros.semPermissao("Só um administrador pode remover uma conversa.");
+
+      const conversa = await repos.conversas.porId(sessao.contextoId, conversaId);
+      if (!conversa) throw erros.naoEncontrado();
+      if (conversa.apagada_em) return { ok: true, jaEstava: true };
+
+      /* Os membros ANTES de remover: depois disso a consulta não os alcança,
+         e é para eles que o aviso precisa ir. */
+      const paraIds = await repos.conversas.idsDosMembros(conversaId);
+
+      await repos.conversas.apagar(conversaId, sessao.usuarioId);
+
+      await repos.auditoria.registrar({
+        contextoId: sessao.contextoId, usuarioId: sessao.usuarioId,
+        evento: "CONVERSA_REMOVIDA", alvoTipo: "conversa", alvoId: conversaId,
+        detalhe: `${paraIds.length} membros`,
+      });
+
+      barramento.emitir(EVENTOS.CONVERSA_REMOVIDA, {
+        contextoId: sessao.contextoId, conversaId, paraIds, por: sessao.usuarioId,
+      });
+
+      return { ok: true };
+    },
+
     async definirStatus(sessao, status) {
       if (!["online", "ocupado", "ausente", "offline"].includes(status))
         throw erros.invalido("Status inválido.");

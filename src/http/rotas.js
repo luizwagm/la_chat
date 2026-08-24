@@ -513,6 +513,30 @@ function criarRotas({ servico, chamadas, salas, sessoes, convidados, conf, porte
     if (metodo === "GET" && p[0] === "arquivos" && p[2] === "previa" && p.length === 3)
       return enviarArquivo(req, res, sessao, p[1], cors, true);
 
+    /* ======================================================================
+       ARQUIVAR e REMOVER — o menu de três pontinhos da conversa
+
+       Duas ações que parecem a mesma e não são:
+
+         ARQUIVAR  some da lista de QUEM ARQUIVOU. Qualquer membro pode, e os
+                   colegas não são afetados. A mensagem seguinte a traz de
+                   volta — arquivar é "não quero ver agora", não "não quero
+                   mais falar".
+
+         REMOVER   some para TODO MUNDO, e só o administrador pode. É a única
+                   operação do chat que age sobre o histórico dos outros.
+       ====================================================================== */
+    if (metodo === "POST" && p[0] === "conversas" && p[2] === "arquivar" && p.length === 3) {
+      if (!ehUlid(p[1])) throw erros.naoEncontrado();
+      const c = await lerJson(req, 1024);
+      return ok(await servico.arquivarConversa(sessao, p[1], c.arquivar !== false));
+    }
+
+    if (metodo === "DELETE" && p[0] === "conversas" && p.length === 2) {
+      if (!ehUlid(p[1])) throw erros.naoEncontrado();
+      return ok(await servico.removerConversa(sessao, p[1]));
+    }
+
     /* /conversas/:id/... */
     if (p[0] === "conversas" && p.length >= 3) {
       const conversaId = p[1];

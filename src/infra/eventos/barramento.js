@@ -45,6 +45,10 @@ const EVENTOS = Object.freeze({
   MENSAGEM_EDITADA: "mensagem.editada",
   MENSAGEM_LIDA: "mensagem.lida",
   CONVERSA_CRIADA: "conversa.criada",
+  /* A conversa saiu para TODO MUNDO. Quem estiver com ela aberta precisa
+     saber na hora — senão continua escrevendo numa conversa que já não
+     existe, e as mensagens somem sem explicação. */
+  CONVERSA_REMOVIDA: "conversa.removida",
   USUARIO_ENTROU: "usuario.entrou",
   USUARIO_SAIU: "usuario.saiu",
   /* "Corte o acesso desta pessoa AGORA." Emitido ao bloquear e ao sair.

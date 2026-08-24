@@ -5,6 +5,68 @@ recurso, 3ª para correção. Nenhuma casa para no 9.
 
 ---
 
+## 0.17.0 — 23/08/2026 · arquivar e remover conversa
+
+Três pontinhos ao lado de cada conversa, com duas ações que **parecem a mesma e
+não são** — e a diferença entre elas é o desenho inteiro:
+
+* **Arquivar** é de QUEM ARQUIVOU. Some da lista dela e de mais ninguém; os
+  colegas continuam vendo a conversa normalmente. Mora em `conversa_membros`,
+  ao lado de `silenciada`.
+* **Remover** é da CONVERSA. Some para todo mundo, e só o administrador pode.
+  Mora em `conversas.apagada_em`.
+
+Se arquivar morasse em `conversas`, arquivar para si esconderia a conversa da
+equipe inteira — e o defeito só apareceria quando o segundo membro reclamasse
+que ela sumiu sozinha.
+
+### A mensagem nova desarquiva
+
+Arquivar é *"não quero ver isto agora"*, não *"não quero mais falar com essa
+pessoa"*. Se a conversa arquivada continuasse escondida, a mensagem seguinte
+chegaria a um lugar que ninguém olha — e o efeito seria **perder mensagem**, o
+pior defeito possível num chat.
+
+O desarquivamento acontece **dentro da mesma transação** da mensagem: se ela
+entrou, a conversa reapareceu. Fora dela, um erro no meio deixaria a mensagem
+existindo numa conversa que ninguém vê.
+
+Quem quer silêncio de verdade tem `silenciada`, que é outra coisa e já existia.
+
+### Remover não apaga linha nenhuma
+
+É uma marca. A conversa e as mensagens continuam no banco, invisíveis para o
+sistema inteiro. **Remoção é ato de administrador sobre o histórico dos
+OUTROS**, e um clique errado ali não pode ser definitivo. Quem precisa apagar de
+vez — um pedido de LGPD — faz pelo banco, com consciência, e não por um menu.
+
+Quem estiver com a conversa aberta é avisado pelo socket e a tela some na hora:
+continuar escrevendo numa conversa que já não existe é perder o que se escreveu,
+sem aviso.
+
+### Na tela
+
+Os três pontinhos são **irmãos** do item da lista, nunca filhos: botão dentro de
+botão é HTML inválido, e o navegador resolve isso tirando o de dentro do alcance
+do teclado. Aparecem no `hover` — e **sempre** onde não há mouse, porque num
+celular um controle que só existe no hover não existe.
+
+As arquivadas somem da lista e ficam atrás de uma linha no fim, que diz quantas
+são. Escondê-las de vez tornaria "desarquivar" impossível de achar: a pessoa
+precisaria da conversa na lista para abrir o menu que a traria de volta à lista.
+
+E "Remover" só aparece para administrador. A tranca de verdade é a do servidor —
+aqui é sobre não oferecer o que a pessoa não pode fazer.
+
+### Também
+
+`CONVERSA_REMOVIDA` entrou na lista branca da auditoria. Sem isso o registro era
+**descartado com um aviso no console** — a mesma armadilha que a sincronização
+de elenco já tinha encontrado. Se há um evento que precisa estar auditado, é o
+único que age sobre o histórico dos outros.
+
+---
+
 ## 0.16.1 — 23/08/2026 · os dois cookies no mesmo navegador
 
 O segundo defeito do "conectando…", e só apareceu ao reproduzir o arranjo REAL:

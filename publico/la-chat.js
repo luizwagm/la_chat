@@ -196,6 +196,53 @@
 .item .previa { font-size: 12.5px; color: var(--tinta-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .item.nao-lida .previa { color: var(--tinta); font-weight: 600; }
 
+/* ==========================================================================
+   A LINHA DA CONVERSA — envelope, e não só o botão
+
+   O item era um <button>. Pôr os três pontinhos DENTRO dele seria botão
+   dentro de botão: HTML inválido, e o teclado deixa de alcançar o de dentro.
+   Então a linha virou um envelope com dois controles irmãos.
+   ========================================================================== */
+.linha { position: relative; display: flex; align-items: stretch; }
+.linha > .item { flex: 1; min-width: 0; }
+
+.tres {
+  flex: none; width: 30px; border: 0; background: transparent; cursor: pointer;
+  color: var(--tinta-3); font-size: 16px; line-height: 1; padding: 0;
+  opacity: 0; transition: opacity .12s ease;
+}
+/* Aparece ao passar o mouse — e SEMPRE onde não há mouse, porque num celular
+   um controle que só existe no hover não existe. */
+.linha:hover .tres, .tres:focus-visible, .tres[aria-expanded="true"] { opacity: 1; }
+@media (hover: none) { .tres { opacity: .7; } }
+.tres:hover { color: var(--tinta); }
+.tres:focus-visible { outline: 2px solid var(--chat-primaria); outline-offset: -2px; }
+
+.menu {
+  position: absolute; right: 6px; top: 100%; z-index: 40;
+  min-width: 160px; padding: 4px;
+  background: var(--fundo); border: 1px solid var(--linha);
+  border-radius: 10px; box-shadow: var(--sombra);
+  display: flex; flex-direction: column;
+}
+.menu[hidden] { display: none; }
+.menu button {
+  text-align: left; border: 0; background: transparent; cursor: pointer;
+  font: inherit; font-size: 13px; color: var(--tinta);
+  padding: 8px 10px; border-radius: 7px;
+}
+.menu button:hover { background: var(--fundo-3); }
+.menu button:focus-visible { outline: 2px solid var(--chat-primaria); outline-offset: -2px; }
+.menu button.risco { color: var(--perigo); }
+
+.arquivadas {
+  width: 100%; text-align: left; border: 0; cursor: pointer;
+  background: transparent; color: var(--tinta-2); font: inherit; font-size: 12.5px;
+  padding: 9px var(--espaco); border-top: 1px solid var(--linha);
+}
+.arquivadas:hover { background: var(--fundo-3); color: var(--tinta); }
+.linha.arquivada .item .nome b { color: var(--tinta-2); font-weight: 500; }
+
 .selo {
   min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px;
   background: var(--chat-primaria); color: var(--chat-primaria-texto);
@@ -1220,6 +1267,13 @@
           this.carregarConversas();
           break;
 
+        /* A conversa saiu para todo mundo. Some da tela AGORA — continuar
+           escrevendo numa conversa que já não existe é perder o que se
+           escreveu, sem aviso nenhum. */
+        case "conversa.removida":
+          this.conversaRemovida(m);
+          break;
+
         /* Alguém entrou, saiu ou mudou de cargo no sistema do hospedeiro. */
         case "elenco":
           this.carregarPessoas();
@@ -1238,6 +1292,13 @@
           setTimeout(() => this.esconderFaixa(), 4000);
           break;
       }
+    }
+
+    /* A conversa foi removida por um administrador. Some da tela na hora —
+       continuar escrevendo numa conversa que já não existe seria perder o
+       que se escreveu, sem aviso. */
+    conversaRemovida(m) {
+      this.tirarConversaDaTela(m.c);
     }
 
     sincronizar() {
@@ -1709,7 +1770,36 @@
         return;
       }
 
-      for (const c of this.estado.conversas) lista.appendChild(this.linhaConversa(c));
+      /* ==================================================================
+         AS ARQUIVADAS FICAM ESCONDIDAS, MAS ALCANÇÁVEIS
+
+         Escondê-las de vez tornaria "desarquivar" impossível de achar: a
+         pessoa precisaria da conversa na lista para abrir o menu que a
+         traria de volta à lista.
+
+         Então elas somem da lista principal e ficam atrás de uma linha no
+         fim, que diz quantas são.
+         ================================================================== */
+      const ativas = this.estado.conversas.filter((c) => !c.arquivada);
+      const arquivadas = this.estado.conversas.filter((c) => c.arquivada);
+
+      for (const c of ativas) lista.appendChild(this.linhaConversa(c));
+
+      if (!ativas.length && arquivadas.length)
+        lista.appendChild(criar("div", { classe: "carregando",
+          texto: "Tudo arquivado por aqui." }));
+
+      if (arquivadas.length) {
+        lista.appendChild(criar("button", {
+          classe: "arquivadas", type: "button",
+          "aria-expanded": String(!!this.estado.verArquivadas),
+          texto: (this.estado.verArquivadas ? "▾ " : "▸ ")
+            + "Arquivadas (" + arquivadas.length + ")",
+          onclick: () => { this.estado.verArquivadas = !this.estado.verArquivadas; this.pintarLista(); },
+        }));
+        if (this.estado.verArquivadas)
+          for (const c of arquivadas) lista.appendChild(this.linhaConversa(c));
+      }
     }
 
     linhaConversa(c) {
@@ -1744,7 +1834,125 @@
           texto: naoLidas > 99 ? "99+" : String(naoLidas),
         }));
 
-      return item;
+      /* ================================================================
+         OS TRÊS PONTINHOS
+
+         Irmão do item, nunca filho: botão dentro de botão é HTML inválido, e
+         o navegador resolve isso tirando o de dentro do alcance do teclado.
+         ================================================================ */
+      const tres = criar("button", {
+        classe: "tres", type: "button", texto: "⋮",
+        "aria-label": "Opções de " + nome,
+        "aria-haspopup": "menu",
+        "aria-expanded": "false",
+        onclick: (e) => { e.stopPropagation(); this.abrirMenuDaConversa(c, e.currentTarget); },
+      });
+
+      const linha = criar("div", {
+        classe: "linha" + (c.arquivada ? " arquivada" : ""),
+      }, [item, tres]);
+      linha.dataset.conversa = c.id;
+      return linha;
+    }
+
+    /* ======================================================================
+       O MENU DA CONVERSA
+
+       Duas ações que parecem a mesma e não são:
+
+         ARQUIVAR  some da MINHA lista. Qualquer membro pode, e os colegas não
+                   são afetados. A mensagem seguinte a traz de volta —
+                   arquivar é "não quero ver agora", não "não quero mais
+                   falar". Para isso existe silenciar, que é outra coisa.
+
+         REMOVER   some para TODO MUNDO, e só administrador. É a única ação do
+                   chat que age sobre o histórico dos outros — por isso pede
+                   confirmação e fica na auditoria.
+       ====================================================================== */
+    abrirMenuDaConversa(c, botao) {
+      this.fecharMenu();
+
+      const menu = criar("div", { classe: "menu", role: "menu" });
+      const opcao = (texto, classe, aoClicar) => criar("button", {
+        classe, type: "button", role: "menuitem", texto,
+        onclick: (e) => { e.stopPropagation(); this.fecharMenu(); aoClicar(); },
+      });
+
+      menu.appendChild(opcao(
+        c.arquivada ? "Desarquivar" : "Arquivar", "",
+        () => this.arquivarConversa(c, !c.arquivada)));
+
+      /* Só o administrador vê a remoção. O servidor recusa de qualquer forma;
+         aqui é sobre não oferecer o que a pessoa não pode fazer. */
+      if (this.estado.eu?.papel === "admin")
+        menu.appendChild(opcao("Remover conversa", "risco", () => this.removerConversa(c)));
+
+      botao.parentNode.appendChild(menu);
+      botao.setAttribute("aria-expanded", "true");
+      this._menuAberto = { menu, botao };
+
+      /* Fechar por clique fora e por ESC. `capture` porque o clique de outro
+         botão para na própria linha antes de subir. */
+      this._fechaMenu = (e) => { if (!menu.contains(e.target) && e.target !== botao) this.fecharMenu(); };
+      this._escMenu = (e) => { if (e.key === "Escape") { this.fecharMenu(); botao.focus(); } };
+      setTimeout(() => {
+        this.raiz.addEventListener("click", this._fechaMenu, true);
+        this.raiz.addEventListener("keydown", this._escMenu);
+      }, 0);
+
+      menu.querySelector("button")?.focus();
+    }
+
+    fecharMenu() {
+      if (this._fechaMenu) this.raiz.removeEventListener("click", this._fechaMenu, true);
+      if (this._escMenu) this.raiz.removeEventListener("keydown", this._escMenu);
+      this._fechaMenu = this._escMenu = null;
+      if (!this._menuAberto) return;
+      const { menu, botao } = this._menuAberto;
+      try { menu.remove(); } catch { }
+      botao.setAttribute("aria-expanded", "false");
+      this._menuAberto = null;
+    }
+
+    async arquivarConversa(c, arquivar) {
+      try {
+        await this.api("/conversas/" + c.id + "/arquivar",
+          { metodo: "POST", corpo: { arquivar } });
+        c.arquivada = arquivar;
+        /* Arquivar a conversa ABERTA fecha a conversa: deixá-la na tela
+           depois de tirá-la da lista é dizer duas coisas contrárias. */
+        if (arquivar && this.estado.atual?.id === c.id) this.fecharConversa();
+        this.pintarLista();
+      } catch (e) {
+        this.mostrarFaixa(e.message, true);
+      }
+    }
+
+    async removerConversa(c) {
+      const nome = c.tipo === "grupo" ? (c.titulo || "o grupo") : (c.outro?.nome || "a conversa");
+      /* A confirmação diz o que ACONTECE, e para quem — "tem certeza?" não
+         informa nada a quem já clicou. */
+      if (!confirm("Remover " + nome + " para TODOS os participantes?\n\n"
+        + "As mensagens deixam de aparecer para todo mundo. Só um administrador "
+        + "pode fazer isto, e a ação fica registrada.")) return;
+      try {
+        await this.api("/conversas/" + c.id, { metodo: "DELETE" });
+        this.tirarConversaDaTela(c.id);
+      } catch (e) {
+        this.mostrarFaixa(e.message, true);
+      }
+    }
+
+    /* Some da tela — usado pelo próprio administrador e por quem recebeu o
+       aviso pelo socket. Um caminho só, para os dois não divergirem. */
+    tirarConversaDaTela(conversaId) {
+      this.estado.conversas = this.estado.conversas.filter((x) => x.id !== conversaId);
+      if (this.estado.atual?.id === conversaId) {
+        this.fecharConversa();
+        this.mostrarFaixa("Esta conversa foi removida.", false);
+        setTimeout(() => this.esconderFaixa(), 5000);
+      }
+      this.pintarLista();
     }
 
     /* ======================================================================

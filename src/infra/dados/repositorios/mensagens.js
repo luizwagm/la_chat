@@ -109,6 +109,15 @@ function criar(Q, indice) {
           await T.run(
             "UPDATE conversas SET ultima_seq = ultima_seq + 1, ultima_mensagem_em = ? WHERE id = ?",
             t, conversaId);
+
+          /* DESARQUIVA PARA TODOS. Dentro da MESMA transação da mensagem: se
+             a mensagem entrou, a conversa reapareceu para quem a arquivou.
+             Fora dela, um erro no meio deixaria a mensagem existindo numa
+             conversa que ninguém vê — perder mensagem é o pior defeito
+             possível num chat. */
+          await T.run(
+            `UPDATE conversa_membros SET arquivada_em = NULL
+               WHERE conversa_id = ? AND arquivada_em IS NOT NULL`, conversaId);
           const c = await T.get("SELECT ultima_seq FROM conversas WHERE id = ?", conversaId);
           seq = Number(c.ultima_seq);
 

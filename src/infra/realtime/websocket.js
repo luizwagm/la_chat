@@ -459,6 +459,12 @@ function ligarAoBarramento({ barramento, transporte, EVENTOS }) {
      mas o relógio dele é do visitante — e adiantá-lo é um clique nas
      configurações do sistema. Quem encerra a reunião é quem a hospeda.
      ========================================================================== */
+  /* A conversa saiu. Quem está com ela aberta precisa saber AGORA — senão
+     continua escrevendo numa conversa que já não existe. */
+  barramento.escutar(EVENTOS.CONVERSA_REMOVIDA, ({ paraIds, conversaId }) => {
+    transporte.publicar(paraIds, { t: "conversa.removida", c: conversaId });
+  });
+
   barramento.escutar(EVENTOS.SALA_AVISO, ({ paraIds, salaId, restanteMs }) => {
     transporte.publicar(paraIds, { t: "sala.aviso", s: salaId, restanteMs });
   });

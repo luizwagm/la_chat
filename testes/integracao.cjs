@@ -464,9 +464,100 @@ async function rodar() {
     P.eq(saude.dados.banco, "ok", "banco ok");
     P.ok(!saude.texto.includes(chat.pastaDados), "o health check NÃO vaza caminho do servidor");
 
+
+    /* ======================================================================
+       ARQUIVAR E REMOVER — duas ações que parecem a mesma
+
+         ARQUIVAR  é de QUEM ARQUIVOU. Some da lista dela e de mais ninguém.
+         REMOVER   é da CONVERSA. Some para todos, e só o administrador pode.
+
+       Se arquivar morasse em `conversas` em vez de `conversa_membros`,
+       arquivar para si esconderia a conversa da equipe inteira — e o defeito
+       só apareceria quando o segundo membro reclamasse que ela sumiu sozinha.
+       Este é o caso que prova a separação.
+       ====================================================================== */
+    P.secao("arquivar e remover conversa");
+
+    {
+      /* Sessões PRÓPRIAS. As de cima já foram encerradas por casos anteriores
+         (há testes de logout e de sessão duplicada), e reaproveitá-las faria
+         este bloco falhar por um motivo que não é o dele. */
+      const adm = await entrar(chat, ANA);
+      const membro = await entrar(chat, BRUNO);
+
+      const conv = (await adm.vai("/conversas/direta", {
+        metodo: "POST", corpo: { usuarioId: membro.usuario.id },
+      })).dados;
+      const cid = conv.id || conv.conversa?.id;
+
+      await adm.vai(`/conversas/${cid}/mensagens`, {
+        metodo: "POST", corpo: { texto: "ZZ QA para arquivar", idCliente: "zzqa-arq-1" },
+      });
+
+      const arq = await adm.vai(`/conversas/${cid}/arquivar`, {
+        metodo: "POST", corpo: { arquivar: true },
+      });
+      P.eq(arq.status, 200, "a Ana arquiva a conversa");
+
+      const listaAna = (await adm.vai("/conversas")).dados.conversas;
+      const naAna = listaAna.find((c) => c.id === cid);
+      P.eq(naAna?.arquivada, true, "e ela vem marcada como arquivada para a Ana");
+
+      /* O PONTO: o Bruno não foi afetado. */
+      const naBruno = (await membro.vai("/conversas")).dados.conversas.find((c) => c.id === cid);
+      P.ok(!!naBruno, "o Bruno continua com a conversa");
+      P.ok(!naBruno.arquivada, "e ela NÃO está arquivada para ele — arquivar é de quem arquivou");
+
+      /* Desarquivar volta. */
+      await adm.vai(`/conversas/${cid}/arquivar`, { metodo: "POST", corpo: { arquivar: false } });
+      P.ok(!(await adm.vai("/conversas")).dados.conversas.find((c) => c.id === cid)?.arquivada,
+        "desarquivar devolve a conversa à lista");
+
+      /* ==================================================================
+         A MENSAGEM NOVA DESARQUIVA.
+
+         Sem isto, a mensagem seguinte chegaria a um lugar que ninguém olha —
+         e o efeito seria PERDER MENSAGEM, o pior defeito possível num chat.
+         Quem quer silêncio tem `silenciada`, que é outra coisa.
+         ================================================================== */
+      await adm.vai(`/conversas/${cid}/arquivar`, { metodo: "POST", corpo: { arquivar: true } });
+      await membro.vai(`/conversas/${cid}/mensagens`, {
+        metodo: "POST", corpo: { texto: "ZZ QA mensagem nova", idCliente: "zzqa-arq-2" },
+      });
+      P.ok(!(await adm.vai("/conversas")).dados.conversas.find((c) => c.id === cid)?.arquivada,
+        "mensagem nova DESARQUIVA — senão a conversa engoliria o que chega");
+
+      /* ==================================================================
+         REMOVER — só administrador, e para todos.
+         ================================================================== */
+      P.recusa(await membro.vai(`/conversas/${cid}`, { metodo: "DELETE" }), 403,
+        "funcionário comum NÃO remove conversa");
+
+      const rem = await adm.vai(`/conversas/${cid}`, { metodo: "DELETE" });
+      P.eq(rem.status, 200, "a administradora remove");
+
+      P.ok(!(await adm.vai("/conversas")).dados.conversas.find((c) => c.id === cid),
+        "e ela some da lista de quem removeu");
+      P.ok(!(await membro.vai("/conversas")).dados.conversas.find((c) => c.id === cid),
+        "e da lista de TODOS os outros também");
+
+      /* A conversa removida não recebe mais nada. */
+      P.recusa(await adm.vai(`/conversas/${cid}/mensagens`, {
+        metodo: "POST", corpo: { texto: "ZZ QA depois de remover", idCliente: "zzqa-arq-3" },
+      }), 404, "e não recebe mensagem nova");
+
+      /* NÃO APAGOU LINHA NENHUMA — é marca, e a auditoria registra quem fez.
+         Remoção é ato de administrador sobre o histórico dos outros; um
+         clique errado não pode ser definitivo. */
+      const registro = (await adm.vai("/admin/auditoria?evento=CONVERSA_REMOVIDA")).dados;
+      const eventos = registro?.eventos || registro?.registros || [];
+      P.ok(eventos.some((e) => e.alvoId === cid || e.alvo_id === cid),
+        "a remoção fica na auditoria, com quem fez", JSON.stringify(eventos[0] || {}).slice(0, 90));
+    }
   } finally {
     await chat.derrubar();
   }
+
 
   return P.fim();
 }
