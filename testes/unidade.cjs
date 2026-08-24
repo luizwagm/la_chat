@@ -629,6 +629,63 @@ async function rodar() {
       "e traz a validade embutida no próprio nome de usuário");
   }
 
+  /* ======================================================================
+     O COOKIE DO CONVIDADO — o defeito que a suíte não podia ver
+
+     O convidado tem sessão própria: cookie `cvd` e token `cvd_csrf`. O
+     componente procurava sempre `cid_csrf`, o do funcionário. Para um
+     convidado esse cookie não existe, então o CSRF ia VAZIO, o
+     `POST /bilhete` era recusado, e ele NUNCA abria o WebSocket.
+
+     Sem socket não há troca de sinais WebRTC. O sintoma: a reunião abre, as
+     pessoas aparecem com nome, e todos os retratos ficam eternamente em
+     "conectando…" — com cara de problema de rede, de TURN, de firewall. A
+     chamada interna funcionava, porque ali o cookie é `cid`.
+
+     ---------------------------------------------------------------------
+     POR QUE 660 TESTES NÃO PEGARAM
+
+     Porque o cliente de teste monta o cabeçalho CSRF sozinho, lendo o cookie
+     certo. A suíte provava o SERVIDOR e emulava um cliente correto —
+     exatamente o que o cliente de verdade não era.
+
+     Estas travas olham o CÓDIGO DO CLIENTE, que é onde o defeito morava.
+     ====================================================================== */
+  P.secao("cliente: o convidado usa o cookie DELE");
+
+  {
+    const fs2 = require("node:fs");
+    const path2 = require("node:path");
+    const publico = path2.join(__dirname, "..", "publico");
+    const nucleo = fs2.readFileSync(path2.join(publico, "la-chat.js"), "utf8");
+    const pagina = fs2.readFileSync(path2.join(publico, "sala.js"), "utf8");
+
+    /* O nome do cookie tem de DEPENDER do modo, e não ser fixo. */
+    const getter = /get nomeDoCookie\(\)\s*\{([\s\S]{0,300}?)\}/.exec(nucleo);
+    P.ok(!!getter, "o componente decide o nome do cookie num lugar só");
+    P.ok(/modo === "sala"/.test(getter?.[1] || ""),
+      "e a decisão OLHA O MODO", (getter?.[1] || "").trim().slice(0, 80));
+    P.ok(/"cvd"/.test(getter?.[1] || "") && /"cid"/.test(getter?.[1] || ""),
+      "conhecendo os dois cookies: cvd para convidado, cid para funcionário");
+
+    /* E o `csrf()` precisa USAR o getter, não reintroduzir o literal. */
+    const corpoCsrf = /\n    csrf\(\) \{([\s\S]{0,300}?)\n    \}/.exec(nucleo);
+    P.ok(!!corpoCsrf, "achei o csrf()");
+    P.ok(/nomeDoCookie/.test(corpoCsrf?.[1] || ""),
+      "que lê o nome pelo getter", (corpoCsrf?.[1] || "").trim().slice(0, 70));
+    P.ok(!/"cid"/.test(corpoCsrf?.[1] || ""),
+      "e NÃO traz o \"cid\" de volta escrito à mão — era essa linha o defeito");
+
+    /* A página do convidado também diz, explicitamente. */
+    P.ok(/setAttribute\("cookie",\s*"cvd"\)/.test(pagina),
+      "a página do convidado passa o cookie dela ao componente");
+
+    /* A PROVA DE QUE O TESTE NÃO É VAZIO. */
+    const sabotado = corpoCsrf?.[1]?.replace("nomeDoCookie", '"cid"') || "";
+    P.ok(!/nomeDoCookie/.test(sabotado) && /"cid"/.test(sabotado),
+      "e a trava ACUSA se alguém fixar o cookie do funcionário de novo");
+  }
+
   /* ====================================================================== */
   P.secao("tradução de SQL");
 

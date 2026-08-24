@@ -5,6 +5,56 @@ recurso, 3ª para correção. Nenhuma casa para no 9.
 
 ---
 
+## 0.16.0 — 23/08/2026 · o convidado procurava o cookie do funcionário
+
+**Era este o defeito.** Não o TURN, não o firewall, não a rede, não o relay —
+todos foram investigados a fundo e estavam certos.
+
+O convidado tem sessão própria: cookie `cvd`, token `cvd_csrf`. O componente
+procurava sempre `cid_csrf`, o do funcionário. Para um convidado esse cookie não
+existe, então o CSRF ia **vazio**, o `POST /bilhete` era recusado, e ele
+**nunca abria o WebSocket**.
+
+Sem socket não há troca de sinais WebRTC. O sintoma: a reunião abre, as pessoas
+aparecem com nome na tela, e todos os retratos ficam eternamente em
+"conectando…" — com cara de problema de rede. E a chamada interna funcionava,
+porque ali o cookie é `cid`. **"O chat funciona, só o link não."**
+
+Verificado com o cliente real, no navegador: o convidado passou a ler um token
+de 43 caracteres, o socket abre, e o estado ICE entre anfitrião e convidado
+chega a `connected`. Com `cid`, o mesmo teste devolve string vazia.
+
+### Por que 660 testes não pegaram
+
+Porque o cliente de teste monta o cabeçalho CSRF sozinho, lendo o cookie certo.
+**A suíte provava o servidor e emulava um cliente correto** — exatamente o que o
+cliente de verdade não era.
+
+As travas novas olham o CÓDIGO DO CLIENTE, que é onde o defeito morava: o nome
+do cookie tem de depender do modo, e o `csrf()` não pode trazer o `"cid"` de
+volta escrito à mão. Uma delas se auto-verifica. E há um caso no servidor
+fixando a consequência: CSRF vazio não tira bilhete.
+
+### Investigação: o que não era
+
+Ficam registrados, porque custaram caro e podem voltar a ser suspeitos:
+
+* **O relay estava perfeito** — provado da máquina de quem reclamava: TCP e UDP
+  chegam, o coturn desafia com o realm certo e concede alocação nos dois
+  transportes. Nenhum firewall de nuvem era necessário.
+* **A política de transporte não era o problema** — `CHAT_VIDEO_SALA_RELAY=0`
+  não mudou nada, e foi essa informação que descartou a mídia e apontou para a
+  sinalização.
+
+### Também
+
+**Recuo automático do relay.** Se uma conexão falha de verdade e estávamos em
+`relay`, a malha é refeita em conexão direta, com aviso na tela do que isso
+custa. Uma reunião que não acontece não protege o IP de ninguém: as pessoas
+desligam e usam outro aplicativo, onde o IP também aparece.
+
+---
+
 ## 0.15.2 — 23/08/2026 · o aviso que alarmava sem motivo
 
 A frase **"Não foi possível falar com o servidor de relay"** apareceu durante uma

@@ -340,6 +340,38 @@ async function rodar() {
       "e um site estranho continua barrado — a defesa não foi afrouxada",
       String(comOrigemAlheia.status));
 
+    /* ======================================================================
+       O BILHETE DO SOCKET EXIGE O CSRF DO CONVIDADO
+
+       Este caso existe por causa de um defeito de CLIENTE: ele mandava o
+       cabeçalho CSRF vazio, porque procurava o cookie do funcionário. O
+       servidor recusava — corretamente — e o convidado nunca abria o
+       WebSocket. Sem socket, não há sinalização WebRTC, e a reunião ficava
+       eternamente "conectando…".
+
+       Aqui se fixa a CONSEQUÊNCIA no servidor: sem o token certo, não há
+       bilhete. É o que dá sentido à trava do lado do cliente, em
+       `testes/unidade.cjs`.
+       ====================================================================== */
+    P.secao("o bilhete do convidado");
+
+    {
+      const semToken = await pedir(`${chat.base}/bilhete`, {
+        metodo: "POST",
+        cabecalhos: {
+          Cookie: [...convidado.potes].map(([k, v]) => `${k}=${v}`).join("; "),
+          "X-Chat-Csrf": "",
+        },
+      });
+      P.ok(semToken.status >= 400,
+        "CSRF vazio NÃO tira bilhete — era assim que o convidado ficava sem socket",
+        String(semToken.status));
+
+      const comToken = await convidado.vai("/bilhete", { metodo: "POST" });
+      P.eq(comToken.status, 200, "e com o token do cookie DELE, tira");
+      P.ok(!!comToken.dados?.bilhete, "vindo um bilhete de verdade");
+    }
+
     /* ====================================================================== */
     P.secao("O QUE O CONVIDADO NÃO ALCANÇA — o coração desta suíte");
 

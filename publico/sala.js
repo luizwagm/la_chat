@@ -232,6 +232,12 @@
     componente.setAttribute("modo", "sala");
     componente.setAttribute("tema", "escuro");
     componente.setAttribute("base", BASE || "/");
+    /* A sessão do convidado tem cookie PRÓPRIO (`cvd`). Sem dizer isto, o
+       componente procuraria o token CSRF do funcionário, não acharia, e o
+       convidado jamais abriria o socket. O componente já assume `cvd` no
+       modo sala; aqui fica explícito porque esta página é o único lugar
+       que sabe, de fato, quem está entrando. */
+    componente.setAttribute("cookie", "cvd");
     /* `manual` impede o componente de tentar abrir sozinho. Quem abre é a
        linha `entrarNaSala` logo abaixo, com a identidade em mãos. */
     componente.setAttribute("manual", "");

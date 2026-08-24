@@ -944,8 +944,34 @@
 
     /* O token CSRF é lido do cookie que o servidor plantou. Ele NÃO é
        HttpOnly de propósito — ver seguranca/sessao.js. */
+    /* ====================================================================
+       O NOME DO COOKIE DEPENDE DE QUEM É
+
+       Funcionário tem `cid` e `cid_csrf`. Convidado de sala tem `cvd` e
+       `cvd_csrf` — uma sessão separada, de propósito (ver
+       seguranca/convidado.js).
+
+       O padrão era sempre `cid`. No modo sala isso fazia `csrf()` devolver
+       string VAZIA, porque o cookie procurado não existe para um convidado.
+       O `POST /bilhete` era recusado por CSRF, o convidado NUNCA abria o
+       WebSocket — e sem socket não há troca de sinais WebRTC.
+
+       O sintoma era o pior possível de diagnosticar: a reunião abre, as
+       pessoas aparecem com nome na tela, e todos os retratos ficam
+       eternamente em "conectando…". Parece problema de rede, de TURN, de
+       firewall — e a chamada interna funciona, porque ali o cookie é `cid`.
+       "O chat funciona, só o link não."
+
+       A suíte não pegou porque o cliente de teste monta o cabeçalho CSRF
+       sozinho, lendo o cookie certo. Ela provava o SERVIDOR e emulava um
+       cliente correto — exatamente o que o cliente de verdade não era.
+       ==================================================================== */
+    get nomeDoCookie() {
+      return this.getAttribute("cookie") || (this.modo === "sala" ? "cvd" : "cid");
+    }
+
     csrf() {
-      const m = new RegExp("(?:^|;\\s*)" + (this.getAttribute("cookie") || "cid") + "_csrf=([^;]*)")
+      const m = new RegExp("(?:^|;\\s*)" + this.nomeDoCookie + "_csrf=([^;]*)")
         .exec(document.cookie);
       return m ? decodeURIComponent(m[1]) : "";
     }

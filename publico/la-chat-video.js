@@ -547,6 +547,34 @@
     return {
       servidores,
 
+      /* ====================================================================
+         DESCER DO RELAY PARA A CONEXÃO DIRETA
+
+         `iceTransportPolicy` é definida na CRIAÇÃO de cada RTCPeerConnection e
+         não pode ser trocada depois. Mudar de ideia, portanto, é refazer as
+         conexões — não há caminho mais barato, e fingir que há produziria uma
+         malha metade numa política e metade noutra.
+
+         Isto existe porque a alternativa era pior: numa rede que bloqueia UDP
+         para o relay, uma reunião por link com `relay` obrigatório
+         simplesmente NÃO ACONTECE, enquanto a chamada interna entre as mesmas
+         duas pessoas funciona. "O chat funciona, só o link não" — e o motivo
+         não aparece em lugar nenhum.
+
+         A troca é consciente e tem preço: sem relay, os participantes voltam a
+         ver o IP uns dos outros. Por isso quem chama isto avisa na tela, e por
+         isso acontece uma vez só, depois de a conexão ter FALHADO de verdade.
+         ==================================================================== */
+      politicaAtual() { return politica; },
+
+      refazerCom(novaPolitica) {
+        politica = novaPolitica;
+        const ids = [...pares.keys()];
+        for (const p of pares.values()) { try { p.pc.close(); } catch { } }
+        pares.clear();
+        return ids;
+      },
+
       async definirLocal(fluxo) {
         fluxoLocal = fluxo;
         for (const p of pares.values()) {
@@ -919,13 +947,7 @@
           /* A FALHA DE CONEXÃO — esta sim vai para a tela, e traz junto o
              resumo do que foi tentado, que é o que permite diagnosticar sem
              abrir o console. */
-          if (e?.falhaDeConexao) {
-            const tentados = (this.video?.errosIce || [])
-              .map((r) => r.codigo + " em " + (r.url || "?")).slice(0, 3).join("; ");
-            this.avisoDeVideo(e.message + (tentados ? " Tentativas: " + tentados : ""));
-            clearTimeout(this._avisoIce);
-            this._avisoIce = setTimeout(() => this.avisoDeVideo(""), 25000);
-          }
+          if (e?.falhaDeConexao) this.recuarDoRelay(e);
         },
       });
       v.malha.servidores(dados.credenciais);
@@ -2195,6 +2217,48 @@
   /* ------------------------------------------------------------------------
      ABRIR EM JANELA
      ------------------------------------------------------------------------ */
+  /* ------------------------------------------------------------------------
+     A REUNIÃO ACONTECE, MESMO QUE SEM RELAY
+
+     Chamado quando uma conexão FALHA de verdade. Se estávamos em `relay` —
+     o que só acontece em reunião por link —, refaz a malha em conexão direta
+     e diz o que mudou.
+
+     Uma reunião que não acontece protege o endereço IP de ninguém: as pessoas
+     desligam e usam outro aplicativo, onde o IP também aparece. Descer com
+     aviso é mais honesto que falhar em silêncio.
+     ------------------------------------------------------------------------ */
+  LaChat.prototype.recuarDoRelay = function (erro) {
+    const v = this.video;
+    if (!v?.malha) return;
+
+    const tentados = (v.errosIce || [])
+      .map((r) => r.codigo + " em " + (r.url || "?")).slice(0, 3).join("; ");
+
+    if (v.recuou || v.malha.politicaAtual() !== "relay") {
+      this.avisoDeVideo((erro?.message || "A conexão falhou.")
+        + (tentados ? " Tentativas: " + tentados : ""));
+      clearTimeout(this._avisoIce);
+      this._avisoIce = setTimeout(() => this.avisoDeVideo(""), 25000);
+      return;
+    }
+
+    v.recuou = true;
+    this.avisoDeVideo("O servidor de relay não respondeu. Conectando direto — "
+      + "nesta reunião os participantes podem ver o endereço IP uns dos outros.");
+    clearTimeout(this._avisoIce);
+    this._avisoIce = setTimeout(() => this.avisoDeVideo(""), 30000);
+
+    const ids = v.malha.refazerCom("all");
+    if (v.local) v.malha.definirLocal(v.local);
+
+    /* Quem RE-OFERECE é quem recuou. O outro lado recebe a oferta nova e
+       responde; não há como combinar isso por fora, e os dois recuando ao
+       mesmo tempo é resolvido pela mesma regra de educado da negociação. */
+    for (const id of ids) v.malha.convidar(id);
+    this.pintarChamada();
+  };
+
   LaChat.prototype.abrirReuniaoEmJanela = async function () {
     const v = this.video;
     if (!v?.chamada || !this.el.chamada) return;
