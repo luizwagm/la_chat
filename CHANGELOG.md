@@ -5,6 +5,26 @@ recurso, 3ª para correção. Nenhuma casa para no 9.
 
 ---
 
+## 0.17.1 — 23/08/2026 · "conectando…" passa a dizer o motivo
+
+Num celular não há console. A pessoa via "conectando…" e mais nada — sem
+informação e sem caminho —, e do outro lado alguém tinha de adivinhar.
+
+O ICE só declara `failed` depois de esgotar as tentativas, e às vezes não
+declara nunca: fica em `checking` indefinidamente. Então quem avisa passou a ser
+o relógio. Passados **20 segundos** com alguém ainda travado, a tela conta o que
+foi tentado — e a conclusão vem do PADRÃO dos erros, não do último deles:
+
+* todos expiraram → *"Sua rede não está alcançando o servidor de vídeo. Tente
+  por outra rede."*
+* algum 401/403 → *"O servidor de relay recusou a credencial."*
+
+Depois vem o detalhe técnico entre parênteses, para quem for repassar a quem
+cuida do servidor. E ele não interrompe nada: a negociação continua, e se fechar
+depois o aviso sai da tela sozinho.
+
+---
+
 ## 0.17.0 — 23/08/2026 · arquivar e remover conversa
 
 Três pontinhos ao lado de cada conversa, com duas ações que **parecem a mesma e

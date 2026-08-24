@@ -966,6 +966,25 @@
       clearInterval(v.timer);
       v.timer = setInterval(() => this.pintarRelogio(), 1000);
 
+      /* ====================================================================
+         O RELÓGIO DA PACIÊNCIA
+
+         "Conectando…" para sempre não é um estado — é a ausência de resposta,
+         e ela não diz nada a quem está esperando. Pior: num celular não há
+         console para descobrir o motivo, então a pessoa fica sem nenhuma
+         informação e sem nenhum caminho.
+
+         O ICE só declara `failed` depois de esgotar as tentativas, e às vezes
+         não declara nunca — fica em `checking` indefinidamente. Então quem
+         avisa é o relógio: passados 20 segundos com alguém ainda travado, a
+         tela conta o que foi tentado.
+
+         Não interrompe nada: a negociação continua, e se ela fechar depois o
+         aviso some junto com a próxima pintura.
+         ==================================================================== */
+      clearTimeout(v.paciencia);
+      v.paciencia = setTimeout(() => this.diagnosticarDemora(), 20000);
+
       await this.abrirCamera();
 
       /* Quem ENTROU oferece para quem já estava. Quem já estava recebe o
@@ -1109,7 +1128,9 @@
       const v = this.video;
       if (!v) return;
       clearInterval(v.timer);
+      clearTimeout(v.paciencia);
       v.timer = null;
+      v.paciencia = null;
       toque.parar();
 
       if (v.tela) { for (const t of v.tela.getTracks()) { try { t.stop(); } catch { } } v.tela = null; }
@@ -2228,6 +2249,61 @@
      desligam e usam outro aplicativo, onde o IP também aparece. Descer com
      aviso é mais honesto que falhar em silêncio.
      ------------------------------------------------------------------------ */
+  /* ------------------------------------------------------------------------
+     O QUE ESTÁ ACONTECENDO, PASSADOS 20 SEGUNDOS
+
+     Escrito para ser lido por quem está no celular, sem console e sem paciência:
+     primeiro a conclusão, depois o detalhe técnico entre parênteses para quem
+     for repassar a quem cuida do servidor.
+     ------------------------------------------------------------------------ */
+  LaChat.prototype.diagnosticarDemora = function () {
+    const v = this.video;
+    if (!v?.chamada || !v.malha) return;
+
+    const travados = [...v.participantes.values()].filter((p) =>
+      p.estado === "dentro" && p.id !== this.estado.eu?.id &&
+      !["connected", "completed"].includes(v.malha.estadoDe(p.id) || ""));
+
+    if (!travados.length) return;   // conectou: nada a dizer
+
+    const erros = v.errosIce || [];
+    const porUrl = new Map();
+    for (const e of erros) if (!porUrl.has(e.url)) porUrl.set(e.url, e);
+
+    /* A conclusão vem do PADRÃO dos erros, não do último deles. */
+    const tudoExpirou = erros.length > 0 && erros.every((e) => /timed out|time out/i.test(e.texto || ""));
+    const recusou = erros.some((e) => e.codigo === 401 || e.codigo === 403);
+
+    let frase;
+    if (recusou) {
+      frase = "O servidor de relay recusou a credencial. Avise quem cuida do servidor.";
+    } else if (tudoExpirou) {
+      frase = "Sua rede não está alcançando o servidor de vídeo. "
+        + "Tente por outra rede (Wi-Fi em vez de dados móveis, ou o contrário).";
+    } else if (!erros.length) {
+      frase = "A conexão de vídeo não fechou. Pode ser bloqueio da sua rede.";
+    } else {
+      frase = "A conexão de vídeo não fechou.";
+    }
+
+    const detalhe = [...porUrl.values()]
+      .map((e) => (e.url || "?").replace(/^turns?:/, "").split("?")[0] + ": " + (e.texto || e.codigo))
+      .slice(0, 3).join(" · ");
+
+    this.avisoDeVideo(frase + (detalhe ? "  (" + detalhe + ")" : ""));
+
+    /* Pergunta de novo mais adiante: redes ruins às vezes fecham em 40 s, e
+       nesse caso o aviso precisa sair da tela. */
+    clearTimeout(v.paciencia);
+    v.paciencia = setTimeout(() => {
+      const aindaTravado = [...v.participantes.values()].some((p) =>
+        p.estado === "dentro" && p.id !== this.estado.eu?.id &&
+        !["connected", "completed"].includes(v.malha?.estadoDe(p.id) || ""));
+      if (!aindaTravado) this.avisoDeVideo("");
+      else this.diagnosticarDemora();
+    }, 25000);
+  };
+
   LaChat.prototype.recuarDoRelay = function (erro) {
     const v = this.video;
     if (!v?.malha) return;
