@@ -600,6 +600,40 @@
       },
 
       /* Chamado por quem JÁ ESTAVA na sala, para o recém-chegado. */
+      /* ====================================================================
+         REOFERECER — para a oferta que se perdeu no caminho
+
+         `convidar` é idempotente: se o par já existe, ele não oferece de novo.
+         É o certo no caso comum e é o errado quando a primeira oferta se
+         perdeu — e ela se perde sempre que o outro lado ainda não tinha o
+         socket aberto, o que é a regra e não a exceção para quem acabou de
+         entrar por um link.
+
+         Aqui a pergunta é outra: "esta conexão está de pé?". Se não estiver,
+         oferece de novo. Se estiver, não mexe — renegociar uma conexão viva
+         cortaria a imagem de todo mundo por um instante, sem motivo.
+         ==================================================================== */
+      reconvidar(id) {
+        const existente = pares.get(id);
+        if (!existente) return this.convidar(id);
+
+        const st = existente.pc.connectionState;
+        if (st === "connected" || st === "connecting") return existente;
+
+        (async () => {
+          try {
+            existente.fazendoOferta = true;
+            await existente.pc.setLocalDescription();
+            mandarSinal(id, "oferta", existente.pc.localDescription.toJSON());
+          } catch (e) {
+            aoErro?.(e);
+          } finally {
+            existente.fazendoOferta = false;
+          }
+        })();
+        return existente;
+      },
+
       convidar(id) {
         const p = par(id);
         /* `onnegotiationneeded` dispara sozinho ao acrescentar as trilhas.
@@ -1653,6 +1687,30 @@
   /* ------------------------------------------------------------------------
      A ENTRADA. Chamada pela página do convidado com o que o servidor devolveu.
      ------------------------------------------------------------------------ */
+  /* ------------------------------------------------------------------------
+     O SOCKET ABRIU — refaz o que se perdeu enquanto ele estava fechado
+
+     Sinal de WebRTC é entregue ao vivo: se ninguém estava escutando, acabou.
+     Não há `seq`, não há retomada, e ninguém reoferece sozinho.
+
+     A janela em que isso acontece não é rara — é o caso NORMAL de quem entra
+     por um link: o servidor marca a pessoa como `dentro` e avisa o anfitrião
+     enquanto ela ainda está abrindo o socket. A oferta do anfitrião chega para
+     ninguém, a dela sai antes da hora, e os dois ficam em "conectando…" para
+     sempre — até alguém sair e voltar, que é o que reconstruía tudo.
+
+     Vale também para reconexão no meio da reunião, que tem a mesma forma.
+     ------------------------------------------------------------------------ */
+  LaChat.prototype.aoSocketAberto = function () {
+    const v = this.video;
+    if (!v?.chamada || !v.malha) return;
+    for (const p of v.participantes.values()) {
+      if (p.id !== this.estado.eu?.id && p.estado === "dentro") {
+        try { v.malha.reconvidar(p.id); } catch { }
+      }
+    }
+  };
+
   LaChat.prototype.entrarNaSala = async function ({ eu, sala, chamada }) {
     this.estado.eu = eu;
     this.estado.conversas = [];
@@ -1660,10 +1718,15 @@
 
     this.setAttribute("aberto", "");
 
-    /* O socket vem ANTES de montar a chamada. Invertido, os sinais dos que já
-       estão dentro chegariam antes de haver quem os escutasse — e o sintoma
-       seria uma reunião em que só o último a entrar vê os outros. */
+    /* O socket vem ANTES de montar a chamada — e ESPERA-SE que ele abra.
+       `ligar()` termina quando o `new WebSocket` é construído, não quando a
+       conexão abre; oferecer nesse intervalo é oferecer para um socket em
+       `CONNECTING`, e o sinal é descartado em silêncio.
+
+       Se não abrir a tempo, segue mesmo assim: o gancho `aoSocketAberto`
+       reoferece quando ele abrir. Esperar para sempre seria pior que tentar. */
     await this.ligar();
+    await this.esperarSocket(5000);
     await this.montarChamada(chamada);
     this.pintarRelogio();
   };

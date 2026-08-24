@@ -1156,6 +1156,18 @@
         /* RETOMADA: pergunta o que se perdeu enquanto esteve fora. É o que
            faz o §25 funcionar sem duplicar nem perder. */
         if (this.estado.atual) this.sincronizar();
+
+        /* ================================================================
+           QUEM ESTAVA ESPERANDO O SOCKET
+
+           Mensagem perdida enquanto o socket estava fechado se recupera pela
+           retomada acima, porque mensagem tem `seq` e fica no banco. SINAL DE
+           WEBRTC não: ele é entregue ao vivo, e se ninguém estava escutando,
+           acabou — não há o que retomar, e ninguém reoferece.
+
+           Este gancho existe para o vídeo poder refazer o que se perdeu.
+           ================================================================ */
+        try { this.aoSocketAberto?.(); } catch { }
       };
 
       ws.onmessage = (ev) => {
@@ -1189,6 +1201,29 @@
       this.tentativas++;
       clearTimeout(this.tReconexao);
       this.tReconexao = setTimeout(() => { if (this.hasAttribute("aberto")) this.ligar(); }, espera);
+    }
+
+    /* ====================================================================
+       ESPERAR O SOCKET DE FATO ABRIR
+
+       `ligar()` termina assim que o `new WebSocket` é construído — não quando
+       a conexão abre. Quem manda um sinal logo depois manda para um socket em
+       `CONNECTING`, e `enviarPeloSocket` o descarta em silêncio.
+
+       Era exatamente o que acontecia com o convidado: ele entrava, oferecia, e
+       a oferta caía no vazio porque o socket ainda estava subindo.
+       ==================================================================== */
+    esperarSocket(ms = 5000) {
+      if (this.ws?.readyState === 1) return Promise.resolve(true);
+      return new Promise((ok) => {
+        const fim = Date.now() + ms;
+        const olhar = () => {
+          if (this.ws?.readyState === 1) return ok(true);
+          if (Date.now() > fim) return ok(false);
+          setTimeout(olhar, 60);
+        };
+        olhar();
+      });
     }
 
     desligar() {

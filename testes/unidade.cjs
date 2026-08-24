@@ -686,6 +686,69 @@ async function rodar() {
       "e a trava ACUSA se alguém fixar o cookie do funcionário de novo");
   }
 
+  /* ======================================================================
+     A OFERTA QUE SE PERDE ANTES DO SOCKET ABRIR
+
+     Sinal de WebRTC é entregue AO VIVO. Mensagem tem `seq` e fica no banco —
+     perdida, a retomada a traz de volta. Sinal não: se ninguém estava
+     escutando, acabou, e ninguém reoferece sozinho.
+
+     A janela não é rara — é o caso NORMAL de quem entra por um link: o
+     servidor marca a pessoa como `dentro` e avisa o anfitrião enquanto ela
+     ainda está abrindo o socket. A oferta do anfitrião chega para ninguém, a
+     dela sai antes da hora, e os dois ficam em "conectando…" para sempre.
+
+     O relato foi exato: "o anfitrião precisa sair e entrar de novo pra
+     funcionar" — porque aí o socket do outro já estava aberto havia tempo.
+
+     Reproduzido no navegador com o socket atrasado em 3 segundos: COM o
+     gancho, `connected`; SEM ele, `new` por 17,5 segundos.
+     ====================================================================== */
+  P.secao("cliente: a oferta perdida é refeita quando o socket abre");
+
+  {
+    const fs3 = require("node:fs");
+    const path3 = require("node:path");
+    const publico = path3.join(__dirname, "..", "publico");
+    const nucleo = fs3.readFileSync(path3.join(publico, "la-chat.js"), "utf8");
+    const video = fs3.readFileSync(path3.join(publico, "la-chat-video.js"), "utf8");
+
+    /* O núcleo avisa quem estava esperando, quando o socket abre. */
+    const iOnopen = nucleo.indexOf("ws.onopen = () => {");
+    const corpoOnopen = iOnopen < 0 ? "" : nucleo.slice(iOnopen, iOnopen + 1200);
+    P.ok(iOnopen > 0, "achei o onopen do socket");
+    P.ok(corpoOnopen.includes("aoSocketAberto"),
+      "e ele avisa quem estava esperando o socket");
+
+    P.ok(nucleo.includes("esperarSocket("), "o núcleo sabe ESPERAR o socket abrir");
+
+    /* O vídeo se pendura no aviso e reoferece. */
+    const iGancho = video.indexOf("LaChat.prototype.aoSocketAberto = function");
+    const gancho = iGancho < 0 ? "" : video.slice(iGancho, iGancho + 700);
+    P.ok(iGancho > 0, "o vídeo se pendura nesse aviso");
+    P.ok(gancho.includes("reconvidar"), "e reoferece a quem está dentro");
+
+    /* `reconvidar` NÃO pode ser `convidar`: o par já existe, e `convidar` sai
+       sem fazer nada quando ele existe — que é justamente o caso aqui. */
+    const iRe = video.indexOf("      reconvidar(id) {");
+    const re = iRe < 0 ? "" : video.slice(iRe, iRe + 900);
+    P.ok(iRe > 0, "a malha tem `reconvidar`");
+    P.ok(re.includes("setLocalDescription"),
+      "que FORÇA uma oferta nova — `convidar` sairia sem fazer nada");
+    P.ok(re.includes("connected"), "e não mexe em conexão que já está de pé");
+
+    /* Quem entra por link espera o socket antes de oferecer. */
+    const iEntrar = video.indexOf("entrarNaSala = async function");
+    const entrar = iEntrar < 0 ? "" : video.slice(iEntrar, iEntrar + 900);
+    P.ok(entrar.includes("esperarSocket"),
+      "e quem entra por link espera o socket antes de oferecer");
+
+    /* A PROVA DE QUE O TESTE NÃO É VAZIO. */
+    const sabotado = corpoOnopen.replace("aoSocketAberto", "naoExiste");
+    P.ok(!sabotado.includes("aoSocketAberto"),
+      "e a trava ACUSA se o aviso for removido do onopen");
+  }
+
   /* ====================================================================== */
   P.secao("tradução de SQL");
 

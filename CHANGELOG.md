@@ -5,6 +5,55 @@ recurso, 3ª para correção. Nenhuma casa para no 9.
 
 ---
 
+## 0.18.1 — 23/08/2026 · a oferta que se perdia antes do socket abrir
+
+O relato: *"o anfitrião abre a reunião, os outros entram e fica conectando; aí o
+anfitrião precisa sair e entrar de novo pra funcionar."*
+
+Era uma corrida de tempo, e a janela dela **não é rara — é o caso normal**:
+
+1. O convidado chama `/call/<codigo>/entrar`. O servidor já o marca `dentro` e
+   avisa o anfitrião, que **imediatamente** manda a oferta.
+2. Mas o convidado só abre o socket **depois** de receber a resposta HTTP. A
+   oferta do anfitrião é entregue a ninguém e descartada em silêncio.
+3. O convidado então oferece de volta — e `ligar()` termina quando o
+   `new WebSocket` é construído, não quando a conexão abre. Essa oferta também
+   cai no vazio.
+
+Nada reoferecia. Sair e voltar funcionava porque aí o socket do outro já estava
+aberto havia muito tempo.
+
+### Por que não bastava "tentar de novo"
+
+**Mensagem perdida se recupera; sinal de WebRTC não.** Mensagem tem `seq` e fica
+no banco — a retomada a traz de volta. Sinal é entregue ao vivo: se ninguém
+estava escutando, acabou, e não há o que retomar.
+
+Então o núcleo passou a avisar quando o socket abre, e o vídeo **reoferece** a
+quem ainda não conectou. `reconvidar` existe porque `convidar` é idempotente:
+com o par já criado, ele sai sem fazer nada — que é justamente o caso aqui.
+E ele não mexe em conexão que já está de pé: renegociar cortaria a imagem de
+todos por um instante, sem motivo.
+
+Vale igual para **reconexão no meio da reunião**, que tem a mesma forma e o
+mesmo desfecho.
+
+Quem entra por link também passou a **esperar o socket abrir** antes de
+sinalizar. Se não abrir a tempo, segue mesmo assim — o gancho refaz depois.
+Esperar para sempre seria pior que tentar.
+
+### A prova
+
+Reproduzido no navegador com o socket do convidado **atrasado em 3 segundos**,
+que é o que a rede real faz:
+
+| | Resultado |
+|---|---|
+| **Com** o gancho | `connected` |
+| **Sem** o gancho (código antigo) | `new` — por 17,5 segundos, nunca conecta |
+
+---
+
 ## 0.18.0 — 23/08/2026 · a reunião por link, funcionando e documentada
 
 **Provada atravessando redes distintas** — computador e celular em rede móvel.
