@@ -5,6 +5,36 @@ recurso, 3ª para correção. Nenhuma casa para no 9.
 
 ---
 
+## 0.16.1 — 23/08/2026 · os dois cookies no mesmo navegador
+
+O segundo defeito do "conectando…", e só apareceu ao reproduzir o arranjo REAL:
+o convidado entrando **pelo conector**, no mesmo navegador em que já havia um
+funcionário logado.
+
+Os dois cookies convivem na mesma origem, e é o caso **normal**: alguém logado
+no sistema recebe um link de reunião e o abre ali mesmo. A partir daí a origem
+tem `cid` (funcionário) e `cvd` (convidado).
+
+A regra do roteador era *funcionário primeiro, convidado depois*. O pedido da
+página do convidado levava o CSRF do CONVIDADO e era conferido contra a sessão
+do FUNCIONÁRIO — **403, sempre**. Sem bilhete, sem socket, sem sinalização.
+
+Agora o pedido diz com qual identidade fala (`X-Chat-Como: convidado`). O
+cabeçalho **rebaixa**, nunca eleva: continua exigindo o cookie `cvd` e o CSRF
+que combina com ele, e quem não tem sessão de convidado não ganha nada com ele —
+há teste dos três casos.
+
+### O que a reprodução ensinou
+
+A correção anterior (0.16.0) foi verificada com o cliente real, mas **direto no
+serviço do chat**. A produção passa pelo conector, e foi só ali que este segundo
+defeito apareceu.
+
+Verificar no arranjo certo não é detalhe: os dois defeitos produziam o MESMO
+sintoma, e o primeiro escondia o segundo.
+
+---
+
 ## 0.16.0 — 23/08/2026 · o convidado procurava o cookie do funcionário
 
 **Era este o defeito.** Não o TURN, não o firewall, não a rede, não o relay —

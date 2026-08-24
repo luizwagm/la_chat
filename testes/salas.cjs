@@ -370,6 +370,54 @@ async function rodar() {
       const comToken = await convidado.vai("/bilhete", { metodo: "POST" });
       P.eq(comToken.status, 200, "e com o token do cookie DELE, tira");
       P.ok(!!comToken.dados?.bilhete, "vindo um bilhete de verdade");
+
+      /* ==================================================================
+         OS DOIS COOKIES NO MESMO NAVEGADOR
+
+         É o caso NORMAL, não a exceção: um funcionário logado no sistema
+         recebe um link de reunião e o abre ali mesmo. A partir daí a origem
+         tem `cid` (funcionário) e `cvd` (convidado).
+
+         A regra do roteador era "funcionário primeiro". O pedido da página do
+         convidado levava o CSRF do CONVIDADO e era conferido contra a sessão
+         do FUNCIONÁRIO: 403, sempre. Sem bilhete, sem socket, sem sinalização
+         — e a reunião ficava eternamente em "conectando…".
+
+         O cabeçalho `X-Chat-Como` desempata. Ele REBAIXA a identidade, nunca
+         eleva: continua exigindo o cookie `cvd` e o CSRF que combina com ele.
+         ================================================================== */
+      const misturado = {
+        Cookie: [...convidado.potes].map(([k, v]) => `${k}=${v}`).join("; ")
+          + "; " + [...ana.potes].map(([k, v]) => `${k}=${v}`).join("; "),
+      };
+
+      const semDizer = await pedir(`${chat.base}/bilhete`, {
+        metodo: "POST",
+        cabecalhos: { ...misturado, "X-Chat-Csrf": convidado.csrf() },
+      });
+      P.ok(semDizer.status >= 400,
+        "com os dois cookies e sem dizer quem é, o CSRF do convidado é recusado",
+        String(semDizer.status));
+
+      const dizendo = await pedir(`${chat.base}/bilhete`, {
+        metodo: "POST",
+        cabecalhos: { ...misturado, "X-Chat-Csrf": convidado.csrf(), "X-Chat-Como": "convidado" },
+      });
+      P.eq(dizendo.status, 200,
+        "dizendo que fala como CONVIDADO, o bilhete sai — era este o defeito",
+        JSON.stringify(dizendo.dados)?.slice(0, 70));
+
+      /* E o cabeçalho não vira porta: sem sessão de convidado, ele não dá nada. */
+      const soFuncionario = await pedir(`${chat.base}/bilhete`, {
+        metodo: "POST",
+        cabecalhos: {
+          Cookie: [...ana.potes].map(([k, v]) => `${k}=${v}`).join("; "),
+          "X-Chat-Csrf": ana.csrf(), "X-Chat-Como": "convidado",
+        },
+      });
+      P.ok(soFuncionario.status >= 400,
+        "e quem NÃO tem sessão de convidado não ganha nada com o cabeçalho",
+        String(soFuncionario.status));
     }
 
     /* ====================================================================== */

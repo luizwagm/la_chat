@@ -985,6 +985,15 @@
         headers: {
           ...(opcoes.corpo ? { "Content-Type": "application/json" } : {}),
           ...(["GET", "HEAD"].includes(opcoes.metodo || "GET") ? {} : { "X-Chat-Csrf": this.csrf() }),
+          /* COM QUAL IDENTIDADE ESTE PEDIDO FALA.
+
+             Os dois cookies convivem no mesmo navegador, e é o caso normal:
+             um funcionário logado recebe um link de reunião e o abre ali
+             mesmo. Sem esta linha, o servidor escolhe a sessão de
+             funcionário, confere o CSRF do CONVIDADO contra ela, e recusa
+             tudo com 403 — o convidado nunca tira bilhete, nunca abre o
+             socket, e a reunião fica eternamente em "conectando…". */
+          ...(this.modo === "sala" ? { "X-Chat-Como": "convidado" } : {}),
           ...(opcoes.cabecalhos || {}),
         },
         body: opcoes.corpo ? JSON.stringify(opcoes.corpo) : opcoes.bruto,

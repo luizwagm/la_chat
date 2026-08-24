@@ -135,7 +135,11 @@ function criarPorteiro(origensPermitidas = [], base = "") {
            O sintoma é o chat funcionar num site e falhar em outro, sem padrão. */
         Vary: "Origin",
         "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, X-Chat-Csrf",
+        /* `X-Chat-Como` diz com qual identidade o pedido fala — funcionário
+           ou convidado de sala. Sem ele na lista, o pré-voo do navegador
+           reprova o cabeçalho no ARRANJO B (chat em subdomínio próprio) e o
+           convidado volta a ser confundido com o funcionário. */
+        "Access-Control-Allow-Headers": "Content-Type, X-Chat-Csrf, X-Chat-Como",
         "Access-Control-Max-Age": "600",
       };
     },

@@ -298,7 +298,30 @@ function criarRotas({ servico, chamadas, salas, sessoes, convidados, conf, porte
        ele, bastaria existir uma sessão para qualquer rota do chat responder — e
        um convidado leria a lista de pessoas da empresa.
        ========================================================================== */
-    const sessao = (await sessoes.de(req)) || convidados.de(req);
+    /* ==================================================================
+       COM QUAL IDENTIDADE ESTE PEDIDO ESTÁ FALANDO?
+
+       Os dois cookies convivem no mesmo navegador, e é o caso NORMAL: um
+       funcionário logado no sistema recebe um link de reunião e o abre ali
+       mesmo. A partir daí ele tem `cid` (funcionário) e `cvd` (convidado)
+       na mesma origem.
+
+       A regra anterior — funcionário primeiro, convidado depois — escolhia a
+       identidade errada para a página do convidado. O pedido levava o token
+       CSRF do CONVIDADO e era conferido contra a sessão do FUNCIONÁRIO:
+       403, sempre. O convidado nunca tirava bilhete, nunca abria o socket, e
+       a reunião ficava eternamente em "conectando…".
+
+       Agora quem sabe responde: a página do convidado diz, em cada pedido,
+       que fala como convidado. Não é escalada de privilégio — é o
+       contrário, um REBAIXAMENTO deliberado, e continua exigindo o cookie
+       `cvd` e o CSRF que combina com ele. Quem mandar esse cabeçalho sem ter
+       sessão de convidado não ganha nada: fica sem sessão nenhuma.
+       ================================================================== */
+    const comoConvidado = String(req.headers["x-chat-como"] || "") === "convidado";
+    const sessao = comoConvidado
+      ? convidados.de(req)
+      : ((await sessoes.de(req)) || convidados.de(req));
     if (!publica && !sessao) throw erros.naoAutenticado();
 
     if (sessao?.ehConvidado && !convidadoPode(metodo, p))
