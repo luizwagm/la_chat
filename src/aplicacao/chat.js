@@ -66,6 +66,7 @@ function avisarSeConectorVelho(contexto, versao) {
 
 function criarServico({ repos, conf, barramento, limites, armazenamento, sessoes, passes, ipEmHash }) {
   const L = conf.limites;
+  const JANELA_EDICAO_MS = Math.max(1, Number(L.janelaEdicaoMin || 5)) * 60e3;
 
   /* ------------------------------------------------------------------------
      Atalhos que aparecem em quase todo caso de uso.
@@ -278,7 +279,18 @@ function criarServico({ repos, conf, barramento, limites, armazenamento, sessoes
       if (!usuario) throw erros.naoAutenticado();
       return {
         usuario, preferencias: prefs, status: status.status, statusManual: status.manual,
-        limites: { tamanhoMensagem: L.tamanhoMensagem, tamanhoArquivo: conf.arquivos.tamanhoMaximo },
+        limites: {
+          tamanhoMensagem: L.tamanhoMensagem,
+          tamanhoArquivo: conf.arquivos.tamanhoMaximo,
+          /* A JANELA VAI PARA A TELA, em vez de ser repetida lá.
+
+             O lápis só pode aparecer enquanto a edição for aceita. Se o cliente
+             guardasse o próprio "5 minutos", mudar aqui deixaria a tela
+             oferecendo um botão que o servidor recusa — e o pior tipo de botão
+             é o que promete e o sistema desmente. É o mesmo número, vindo de um
+             lugar só. */
+          janelaEdicaoMs: JANELA_EDICAO_MS,
+        },
       };
     },
 
@@ -578,13 +590,16 @@ function criarServico({ repos, conf, barramento, limites, armazenamento, sessoes
       if (m.autorId !== sessao.usuarioId)
         throw erros.semPermissao("Você só pode editar as suas mensagens.");
 
-      /* 15 minutos. Sem limite, editar vira reescrever a história: alguém
-         combina algo hoje e muda a mensagem semana que vem. Com limite, editar
-         serve ao que serve de verdade — consertar o erro de digitação que a
-         pessoa viu logo depois de enviar. */
-      const LIMITE_MS = 15 * 60e3;
-      if (Date.now() - m.criadaEm > LIMITE_MS)
-        throw erros.invalido("Mensagens só podem ser editadas nos primeiros 15 minutos.");
+      /* Sem limite, editar vira reescrever a história: alguém combina algo hoje
+         e muda a mensagem semana que vem. A janela está em `config.js`, com o
+         porquê do número.
+
+         A conta é sobre `criadaEm`, e não sobre `editadaEm`: senão cada edição
+         renovaria o prazo, e editar de cinco em cinco minutos manteria a
+         mensagem editável para sempre. */
+      if (Date.now() - m.criadaEm > JANELA_EDICAO_MS)
+        throw erros.invalido(
+          "Mensagens só podem ser editadas nos primeiros " + L.janelaEdicaoMin + " minutos.");
 
       const v = texto.validarMensagem(novoTexto, { tamanhoMaximo: L.tamanhoMensagem });
       if (!v.ok) throw erros.invalido(v.erro);

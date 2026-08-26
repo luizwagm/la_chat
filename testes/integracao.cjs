@@ -324,6 +324,65 @@ async function rodar() {
     });
     P.recusa(editarAlheia, 403, "ninguém edita mensagem alheia");
 
+    /* ====================================================================
+       A JANELA FECHA
+
+       Editar serve para consertar o erro de digitação que a pessoa viu logo
+       depois de enviar. Sem prazo, vira reescrever a história: alguém combina
+       algo hoje e muda a mensagem semana que vem — e num chat de clínica, o
+       que se combinou sobre um paciente é justamente o que não pode mudar
+       depois de lido.
+
+       O relógio do teste anda para trás no BANCO, e não no processo: mexer no
+       relógio do servidor faria o teste provar o teste, e não a regra.
+       ==================================================================== */
+    {
+      const idEditar = paraEditar.dados.mensagem.id;
+      const bd = new (require("better-sqlite3"))(
+        require("node:path").join(chat.pastaDados, "chat.db"));
+      bd.prepare("UPDATE mensagens SET criada_em = ? WHERE id = ?")
+        .run(Date.now() - 6 * 60_000, idEditar);
+      bd.close();
+
+      const tarde = await ana.vai(`/conversas/${conversaId}/mensagens/${idEditar}`, {
+        metodo: "PATCH", corpo: { texto: "ZZ QA reescrevendo a historia" },
+      });
+      P.recusa(tarde, 400, "passados os 5 minutos, o próprio autor não edita mais");
+      P.ok(/5 minutos/.test(JSON.stringify(tarde.dados)),
+        "e a recusa DIZ qual é o prazo", JSON.stringify(tarde.dados));
+
+      /* A JANELA SAI DO SERVIDOR PARA A TELA. O lápis só pode aparecer
+         enquanto a edição for aceita; se o cliente guardasse o próprio
+         número, mudar a configuração deixaria a tela oferecendo um botão que
+         o servidor recusa. */
+      const eu = await ana.vai("/eu");
+      P.eq(eu.dados.limites?.janelaEdicaoMs, 5 * 60_000,
+        "e o servidor DIZ ao cliente qual é a janela, em vez de deixá-lo adivinhar",
+        JSON.stringify(eu.dados.limites));
+    }
+
+    /* ====================================================================
+       FOTO COM LEGENDA NÃO SE EDITA
+
+       O repositório só aceita `tipo = 'texto'`. Se a legenda mudasse, a
+       imagem continuaria sendo outra coisa do que a legenda diz — e quem
+       leu antes não teria como saber.
+       ==================================================================== */
+    {
+      const bd2 = new (require("better-sqlite3"))(
+        require("node:path").join(chat.pastaDados, "chat.db"));
+      const comAnexo = await ana.vai(`/conversas/${conversaId}/mensagens`, {
+        metodo: "POST", corpo: { texto: "ZZ QA legenda", idCliente: "editar-anexo-1" },
+      });
+      const idAnexo = comAnexo.dados.mensagem.id;
+      bd2.prepare("UPDATE mensagens SET tipo = 'imagem' WHERE id = ?").run(idAnexo);
+      bd2.close();
+
+      P.recusa(await ana.vai(`/conversas/${conversaId}/mensagens/${idAnexo}`, {
+        metodo: "PATCH", corpo: { texto: "ZZ QA outra legenda" },
+      }), 400, "mensagem com anexo não é editável — só texto puro");
+    }
+
     /* ==================================================================== */
     P.secao("grupos");
 

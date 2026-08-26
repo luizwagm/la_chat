@@ -750,6 +750,57 @@ async function rodar() {
   }
 
   /* ======================================================================
+     O LÁPIS PROMETE O QUE O SERVIDOR CUMPRE
+
+     Um botão que aparece e leva a uma recusa ensina a desconfiar da tela
+     inteira. Então as condições do lápis têm de ser as MESMAS de
+     `editarMensagem`: só a própria mensagem, só texto puro, só dentro da
+     janela — e a janela vem do servidor, não de um número repetido aqui.
+
+     É a mesma classe de defeito que já custou caro neste projeto: dois lados
+     de um limite guardando a mesma constante, e um deles mudando sozinho.
+     ====================================================================== */
+  P.secao("cliente: o lápis de editar só aparece quando a edição é aceita");
+
+  {
+    const fs6 = require("node:fs");
+    const path6 = require("node:path");
+    const raiz6 = path6.join(__dirname, "..");
+    const nucleo6 = fs6.readFileSync(path6.join(raiz6, "publico", "la-chat.js"), "utf8");
+    const app6 = fs6.readFileSync(path6.join(raiz6, "src", "aplicacao", "chat.js"), "utf8");
+
+    const i = nucleo6.indexOf("podeEditar(m) {");
+    const pode = i < 0 ? "" : nucleo6.slice(i, i + 700);
+    P.ok(i > 0, "o cliente tem uma regra única para o lápis");
+
+    P.ok(pode.includes("janelaEdicaoMs"),
+      "que lê a janela do SERVIDOR, e não uma constante repetida na tela");
+    P.ok(/tipo !== "texto"/.test(pode),
+      "recusa foto e arquivo — o repositório só aceita texto puro");
+    P.ok(pode.includes("autorId !== this.estado.eu"),
+      "e só a PRÓPRIA mensagem");
+
+    /* A tela não pode conhecer os cinco minutos por conta própria. */
+    P.ok(!/\b(5|15|300000|900000)\s*\*?\s*60/.test(pode),
+      "e não carrega nenhum prazo próprio dentro dela", pode.slice(0, 120));
+
+    /* O servidor manda a janela por /eu, e usa a MESMA para decidir. */
+    P.ok(app6.includes("janelaEdicaoMs: JANELA_EDICAO_MS"),
+      "o servidor publica a janela que ele mesmo aplica");
+    P.ok(/Date\.now\(\) - m\.criadaEm > JANELA_EDICAO_MS/.test(app6),
+      "e decide por criadaEm — senão cada edição renovaria o prazo para sempre");
+
+    /* O relógio que apaga o lápis numa conversa parada. */
+    P.ok(nucleo6.includes("_relogioDoLapis"),
+      "e um relógio faz o lápis sumir sem depender de chegar evento nenhum");
+
+    /* A PROVA DE QUE O TESTE NÃO É VAZIO. */
+    const sabotado = pode.split("janelaEdicaoMs").join("naoExiste");
+    P.ok(!sabotado.includes("janelaEdicaoMs"),
+      "e a trava acusa se a tela passar a inventar o prazo");
+  }
+
+  /* ======================================================================
      O HISTÓRICO DE REUNIÕES NÃO OCUPA A LISTA
 
      Sala encerrada e link revogado não têm ação nenhuma — nem copiar, porque

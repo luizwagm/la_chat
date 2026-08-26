@@ -205,6 +205,22 @@ const CONF = {
     /* 4.000 caracteres. Acima disso não é mensagem, é documento — e para
        documento existe anexo. Também trava o abuso de encher o banco. */
     tamanhoMensagem: num(process.env.CHAT_LIM_TAMANHO, 4000),
+    /* ====================================================================
+       A JANELA PARA EDITAR
+
+       Cinco minutos. O número não é sobre generosidade, é sobre o que editar
+       serve para fazer: consertar o erro de digitação que a pessoa viu logo
+       depois de enviar. Esse conserto acontece em segundos.
+
+       Uma janela LARGA muda a natureza da coisa. Num chat de clínica, onde a
+       conversa registra o que foi combinado sobre um paciente, poder reescrever
+       o que se disse meia hora atrás — depois de o outro ler e responder — não
+       é correção, é reescrever a história. Curto, o estrago possível é pequeno.
+
+       Que ela seja CONFIGURÁVEL aqui, e não fixa no código, é o que permite um
+       cliente com outra realidade ajustar sem tocar em lógica nenhuma.
+       ==================================================================== */
+    janelaEdicaoMin: num(process.env.CHAT_LIM_EDICAO, 5),
     uploadsPorHora: num(process.env.CHAT_LIM_UPLOAD, 60),
     buscasPorMinuto: num(process.env.CHAT_LIM_BUSCA, 20),
     conversasPorHora: num(process.env.CHAT_LIM_CONVERSA, 30),

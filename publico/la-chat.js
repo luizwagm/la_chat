@@ -326,6 +326,65 @@
 .msg.primeira .bolha { border-top-left-radius: 5px; }
 .msg.minha.primeira .bolha { border-top-left-radius: 14px; border-top-right-radius: 5px; }
 
+/* ==========================================================================
+   AS AÇÕES DA MENSAGEM — aparecem ao passar por cima
+
+   Ficam escondidas por OPACIDADE, e não por display:none. A diferença
+   importa duas vezes: o espaço continua reservado, então a linha não pula
+   quando o mouse chega; e o botão continua no fluxo de tabulação, então quem
+   navega por teclado alcança — e o :focus-within o revela ao chegar lá.
+
+   pointer-events:none enquanto invisível: um botão que não se vê e mesmo
+   assim recebe clique é uma armadilha, principalmente sendo um deles o de
+   apagar.
+   ========================================================================== */
+.acoes-msg { display: flex; gap: 1px; flex: none;
+  opacity: 0; pointer-events: none; transition: opacity .12s ease; }
+.msg:hover .acoes-msg,
+.msg:focus-within .acoes-msg { opacity: 1; pointer-events: auto; }
+
+/* NO CELULAR NÃO EXISTE "PASSAR POR CIMA". Sem isto, editar e apagar
+   simplesmente não existiriam para quem usa o chat no telefone — que é a
+   maior parte de quem usa. */
+@media (hover: none) {
+  .acoes-msg { opacity: 1; pointer-events: auto; }
+}
+
+.acoes-msg .icone { width: 28px; height: 28px; font-size: 14px; border-radius: 7px; }
+
+/* ==========================================================================
+   EDITAR NA PRÓPRIA BOLHA
+
+   E não na caixa de escrever embaixo. Dois motivos: a correção é pequena e os
+   olhos já estão na mensagem — tirá-la dali obriga a procurar o que se estava
+   consertando; e a caixa de baixo costuma ter um rascunho, que seria destruído
+   para caber um conserto de dois caracteres.
+   ========================================================================== */
+.bolha .editor { display: flex; flex-direction: column; gap: 6px; }
+.bolha .editor textarea {
+  font: inherit; font-size: 14px; line-height: 1.45; resize: vertical;
+  min-height: 46px; max-height: 220px; padding: 7px 9px; border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, .35); background: rgba(255, 255, 255, .14);
+  color: inherit; width: 100%; box-sizing: border-box;
+}
+/* A bolha de quem RECEBE tem fundo claro; a de quem envia, colorido. O editor
+   só aparece na própria mensagem, mas o chat tem tema claro e escuro, e um
+   branco fixo aqui sumiria num deles. */
+.msg:not(.minha) .bolha .editor textarea {
+  border-color: var(--linha); background: var(--fundo);
+}
+.bolha .editor textarea:focus { outline: 2px solid currentColor; outline-offset: -1px; }
+.bolha .editor .barra { display: flex; align-items: center; gap: 6px; }
+.bolha .editor .dica { flex: 1; font-size: 10.5px; opacity: .7; }
+.bolha .editor button {
+  font: inherit; font-size: 12px; font-weight: 600; padding: 4px 11px;
+  border-radius: 7px; border: 0; cursor: pointer;
+}
+.bolha .editor button.salvar { background: var(--chat-primaria); color: var(--chat-primaria-texto); }
+.bolha .editor button.cancelar { background: transparent; color: inherit; opacity: .8;
+  border: 1px solid currentColor; }
+.bolha .editor button:disabled { opacity: .45; cursor: default; }
+
 .bolha .autor { font-size: 12px; font-weight: 700; margin-bottom: 2px; opacity: .85; }
 .bolha .rodape {
   display: flex; align-items: center; gap: 4px; justify-content: flex-end;
@@ -2167,6 +2226,27 @@
       }
 
       if (irAoFim || estavaNoFim) corpo.scrollTop = corpo.scrollHeight;
+
+      /* ==================================================================
+         O LÁPIS PRECISA SUMIR SOZINHO
+
+         A lista é repintada a cada evento — mas numa conversa parada não chega
+         evento nenhum. Sem este relógio, quem manda uma mensagem e deixa a aba
+         aberta continua vendo o lápis meia hora depois, e descobre o prazo
+         clicando nele.
+
+         UM relógio para a lista toda, marcado pela mensagem que expira
+         primeiro. Um por mensagem seriam dezenas de temporizadores para
+         desenhar a mesma tela.
+         ================================================================== */
+      clearTimeout(this._relogioDoLapis);
+      let proximo = Infinity;
+      for (const m of this.estado.mensagens) {
+        if (!this.podeEditar(m)) continue;
+        proximo = Math.min(proximo, this.restaParaEditar(m));
+      }
+      if (proximo !== Infinity)
+        this._relogioDoLapis = setTimeout(() => this.pintarMensagens(), Math.max(250, proximo + 250));
     }
 
     bolha(m, primeira) {
@@ -2186,20 +2266,28 @@
       if (!minha && primeira && this.estado.atual?.tipo === "grupo")
         bolha.appendChild(criar("div", { classe: "autor", texto: autor?.nome || "" }));
 
+      const editando = this.estado.editando === m.id && !m.apagada;
+
       if (m.apagada) {
         bolha.appendChild(criar("div", { classe: "conteudo" }, [
           criar("p", { texto: "Mensagem apagada" }),
         ]));
+      } else if (editando) {
+        bolha.appendChild(this.editorDaMensagem(m));
       } else {
         if (m.corpo) bolha.appendChild(renderizarTexto(m.corpo));
         for (const a of m.anexos || []) bolha.appendChild(this.anexo(a));
       }
 
-      const rodape = criar("div", { classe: "rodape" });
-      rodape.appendChild(criar("span", { texto: hora(m.criadaEm) }));
-      if (m.editadaEm) rodape.appendChild(criar("span", { texto: "· editada" }));
-      if (minha) rodape.appendChild(criar("span", { texto: this.marcaDeEstado(m) }));
-      bolha.appendChild(rodape);
+      /* Enquanto se edita, o rodapé sai: hora e marca de leitura pertencem à
+         mensagem que ESTÁ dita, e o que está na tela ainda não foi dito. */
+      if (!editando) {
+        const rodape = criar("div", { classe: "rodape" });
+        rodape.appendChild(criar("span", { texto: hora(m.criadaEm) }));
+        if (m.editadaEm) rodape.appendChild(criar("span", { texto: "· editada" }));
+        if (minha) rodape.appendChild(criar("span", { texto: this.marcaDeEstado(m) }));
+        bolha.appendChild(rodape);
+      }
 
       if (m.estado === "erro") {
         bolha.appendChild(criar("button", {
@@ -2213,17 +2301,172 @@
         }));
       }
 
-      /* Apagar a própria mensagem. Aparece no hover e no foco — só no hover
-         seria inalcançável por teclado (§29). */
-      if (minha && !m.apagada && m.id && !String(m.id).startsWith("tmp-")) {
-        linha.appendChild(criar("button", {
-          classe: "icone", texto: "⋯", "aria-label": "Apagar mensagem",
+      /* Editar e apagar a própria mensagem. Aparecem ao passar por cima e ao
+         receber foco — só no hover seriam inalcançáveis por teclado (§29), e
+         inexistentes no celular. */
+      const gravada = m.id && !String(m.id).startsWith("tmp-");
+      if (minha && !m.apagada && gravada && !editando) {
+        const acoes = criar("div", { classe: "acoes-msg" });
+
+        if (this.podeEditar(m)) {
+          acoes.appendChild(criar("button", {
+            classe: "icone", texto: "✏️", title: "Editar mensagem",
+            "aria-label": "Editar mensagem",
+            onclick: () => this.iniciarEdicao(m),
+          }));
+        }
+
+        acoes.appendChild(criar("button", {
+          classe: "icone", texto: "⋯", title: "Apagar mensagem",
+          "aria-label": "Apagar mensagem",
           onclick: () => this.apagar(m),
         }));
+
+        linha.appendChild(acoes);
       }
 
       linha.appendChild(bolha);
       return linha;
+    }
+
+    /* ====================================================================
+       QUEM PODE EDITAR, E ATÉ QUANDO
+
+       As três condições são as MESMAS do servidor (`editarMensagem` e o
+       `UPDATE` do repositório), e é de propósito: aqui não é a tranca, é a
+       promessa. Um lápis que aparece e leva a uma recusa ensina a desconfiar
+       da tela inteira.
+
+       `tipo === "texto"` exclui foto e arquivo. Uma legenda editável faria a
+       imagem continuar sendo outra coisa do que a legenda diz — e o servidor
+       recusa de qualquer forma.
+
+       A janela vem do SERVIDOR, em `/eu`. Repetir "5 minutos" aqui faria
+       mudar a configuração deixar a tela mentindo.
+       ==================================================================== */
+    podeEditar(m) {
+      if (!m || m.apagada || m.tipo !== "texto") return false;
+      if (m.autorId !== this.estado.eu?.id) return false;
+      if (!m.id || String(m.id).startsWith("tmp-")) return false;
+      const janela = Number(this.estado.limites?.janelaEdicaoMs || 0);
+      if (!janela) return false;
+      return Date.now() - Number(m.criadaEm) <= janela;
+    }
+
+    /* Quanto falta para o lápis sumir. Usado pelo relógio da lista. */
+    restaParaEditar(m) {
+      const janela = Number(this.estado.limites?.janelaEdicaoMs || 0);
+      if (!janela) return Infinity;
+      return janela - (Date.now() - Number(m.criadaEm));
+    }
+
+    iniciarEdicao(m) {
+      /* Reconferir aqui, e não só na pintura: entre o desenho do lápis e o
+         clique cabe o fim da janela — e cabe mais ainda numa aba que ficou
+         aberta a tarde toda sem nenhum evento para repintar. */
+      if (!this.podeEditar(m)) {
+        this.mostrarFaixa("O prazo para editar esta mensagem já passou.", true);
+        this.pintarMensagens();
+        return;
+      }
+      this.estado.editando = m.id;
+      this.estado.editandoTexto = m.corpo || "";
+      this.estado.editandoCursor = null;
+      this.pintarMensagens();
+    }
+
+    cancelarEdicao() {
+      this.estado.editando = null;
+      this.estado.editandoTexto = "";
+      this.estado.editandoCursor = null;
+      this.pintarMensagens();
+    }
+
+    /* ====================================================================
+       O EDITOR
+
+       O texto em curso mora no ESTADO, e não só no <textarea>. A lista inteira
+       é repintada a cada evento que chega — uma mensagem nova de outra pessoa,
+       um "lida", um "digitando" — e a cada repintura o <textarea> é um
+       elemento novo. Sem guardar o que foi digitado, a correção da pessoa
+       sumiria porque alguém do outro lado resolveu falar.
+       ==================================================================== */
+    editorDaMensagem(m) {
+      const area = criar("textarea", {
+        rows: "2", maxlength: String(this.estado.limites?.tamanhoMensagem || 4000),
+        "aria-label": "Editar mensagem",
+      });
+      area.value = this.estado.editandoTexto ?? (m.corpo || "");
+
+      area.addEventListener("input", () => {
+        this.estado.editandoTexto = area.value;
+        this.estado.editandoCursor = area.selectionStart;
+      });
+
+      area.addEventListener("keydown", (e) => {
+        /* Enter salva, Shift+Enter quebra linha — a mesma regra da caixa de
+           escrever, para não haver duas gramáticas de teclado no mesmo chat. */
+        if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); this.salvarEdicao(m); }
+        if (e.key === "Escape") { e.preventDefault(); this.cancelarEdicao(); }
+      });
+
+      const salvar = criar("button", { classe: "salvar", type: "button", texto: "Salvar",
+        onclick: () => this.salvarEdicao(m) });
+      const cancelar = criar("button", { classe: "cancelar", type: "button", texto: "Cancelar",
+        onclick: () => this.cancelarEdicao() });
+
+      /* O foco volta para o campo depois da repintura, com o cursor onde
+         estava. Sem isto, a pessoa perderia o lugar toda vez que chegasse
+         qualquer coisa na conversa. */
+      queueMicrotask(() => {
+        try {
+          area.focus();
+          const pos = this.estado.editandoCursor;
+          if (pos === null || pos === undefined) area.setSelectionRange(area.value.length, area.value.length);
+          else area.setSelectionRange(pos, pos);
+        } catch { }
+      });
+
+      return criar("div", { classe: "editor" }, [
+        area,
+        criar("div", { classe: "barra" }, [
+          criar("span", { classe: "dica", texto: "Enter salva · Esc cancela" }),
+          cancelar, salvar,
+        ]),
+      ]);
+    }
+
+    async salvarEdicao(m) {
+      const novo = String(this.estado.editandoTexto ?? "").trim();
+
+      /* Vazio NÃO apaga. Apagar tem botão próprio, com confirmação — deixar o
+         campo em branco e salvar não pode virar um caminho escondido para
+         destruir a mensagem. */
+      if (!novo || novo === String(m.corpo || "").trim()) return this.cancelarEdicao();
+
+      const id = m.id;
+      this.estado.editando = null;
+      this.estado.editandoTexto = "";
+
+      /* Otimista: o texto novo aparece na hora. A troca real vem da resposta,
+         e o `editada` do socket repõe a mesma coisa — repor duas vezes o mesmo
+         valor não faz mal, e a alternativa (esperar a rede para mostrar o que
+         a pessoa acabou de escrever) faz. */
+      const antes = m.corpo;
+      m.corpo = novo;
+      this.pintarMensagens();
+
+      try {
+        const atualizada = await this.api(
+          `/conversas/${this.estado.atual.id}/mensagens/${id}`,
+          { metodo: "PATCH", corpo: { texto: novo } });
+        const i = this.estado.mensagens.findIndex((x) => x.id === id);
+        if (i >= 0 && atualizada?.id) this.estado.mensagens[i] = atualizada;
+      } catch (e) {
+        m.corpo = antes;
+        this.mostrarFaixa(e.message, true);
+      }
+      this.pintarMensagens();
     }
 
     /* Os estados do §13, na forma que as pessoas já conhecem. */

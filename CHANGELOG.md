@@ -5,6 +5,64 @@ recurso, 3ª para correção. Nenhuma casa para no 9.
 
 ---
 
+## 0.23.0 — 24/08/2026 · o lápis de editar
+
+Passe o mouse sobre a **sua** mensagem e aparecem dois botões: **✏️ editar** e o
+⋯ de apagar. O texto vira campo na própria bolha — **Enter** salva, **Esc**
+cancela — e a mensagem fica marcada como *editada* para todo mundo.
+
+O servidor já sabia fazer isso desde a 0.6.0: rota, reindexação da busca cega,
+auditoria e aviso em tempo real. **Faltava o botão.** Ninguém tinha como chegar lá.
+
+### Cinco minutos, e o porquê
+
+Era 15, virou **5** — e agora vive em `config.js`, com `CHAT_LIM_EDICAO` para
+quem precisar de outro número.
+
+Editar serve para consertar o erro de digitação que a pessoa viu logo depois de
+enviar, e esse conserto acontece em segundos. Janela larga muda a natureza da
+coisa: num chat de clínica, onde a conversa registra o que foi combinado sobre um
+paciente, reescrever o que se disse meia hora atrás — depois de o outro ler e
+responder — não é correção, é reescrever a história.
+
+A conta é sobre **quando foi enviada**, nunca sobre a última edição: senão editar
+de cinco em cinco minutos manteria a mensagem editável para sempre.
+
+### A janela sai do servidor para a tela
+
+O lápis só aparece enquanto a edição for aceita — e para isso a tela recebe o
+prazo em `/eu`, em vez de guardar o próprio "5 minutos". Um número repetido dos
+dois lados de um limite é exatamente a classe de defeito que já custou caro aqui:
+muda-se um, o outro fica, e a tela passa a oferecer um botão que o servidor
+recusa. Há uma trava na suíte que acusa se alguém voltar a escrever o prazo na
+tela.
+
+### As bordas
+
+* **Só texto puro.** Foto com legenda não se edita — a imagem continuaria sendo
+  outra coisa do que a legenda diz, e quem leu antes não teria como saber.
+* **Campo vazio não apaga.** Apagar tem botão próprio, com confirmação; limpar o
+  texto e salvar não pode virar um caminho escondido para destruir a mensagem.
+* **A correção sobrevive à conversa.** A lista é repintada a cada evento que
+  chega; o que está sendo digitado mora no estado, com a posição do cursor. Sem
+  isso, a correção sumiria porque alguém do outro lado resolveu falar.
+* **O lápis some sozinho.** Numa conversa parada não chega evento nenhum para
+  repintar — um relógio, marcado pela mensagem que expira primeiro, faz o botão
+  desaparecer sem que a pessoa descubra o prazo clicando nele.
+* **A busca acompanha.** O índice cego é refeito na edição; sem isso a busca
+  continuaria achando a mensagem pelo texto ANTIGO.
+
+### No celular
+
+Os botões ficam **sempre visíveis** onde não existe "passar por cima"
+(`@media (hover: none)`). Escondê-los atrás do mouse faria editar e apagar
+simplesmente não existirem para quem usa o chat no telefone — que é a maior parte
+de quem usa.
+
+**739 testes** verdes.
+
+---
+
 ## 0.22.0 — 24/08/2026 · o histórico sai da frente
 
 A aba **Reuniões** listava tudo que já existiu. Depois de um mês de uso ela abria
@@ -103,7 +161,7 @@ Migração **007-espera**: `sala_convidados.estado` (`esperando` / `dentro` /
 `negado`) e `decidido_em`. O padrão da coluna é `dentro`, para que ninguém seja
 expulso de uma reunião em andamento no momento da migração.
 
-**713 testes** verdes.
+**719 testes** verdes.
 
 ---
 
