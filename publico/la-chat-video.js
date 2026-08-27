@@ -725,6 +725,47 @@
         return existente;
       },
 
+      /* ====================================================================
+         RECOMEÇAR — a mesma pessoa, de outro contexto
+
+         Quando alguém move a reunião para uma janela separada, quem fala
+         continua sendo a MESMA PESSOA, com o mesmo id de usuário — mas a
+         conexão é outra: outro objeto, outro certificado DTLS, outra
+         credencial de ICE.
+
+         E é aí que `reconvidar` não serve. Ele reoferece sobre a conexão que
+         existe, e o outro lado tem uma conexão ESTABELECIDA com o certificado
+         antigo. Renegociar trocando o certificado no meio não é suportado: o
+         navegador do outro lado recusa, e o sintoma é a pessoa aparecer na
+         lista sem imagem nenhuma — sem erro, sem aviso.
+
+         Então não se renegocia: destrói-se e começa de novo, dos dois lados.
+
+         O sinal `recomeco` LEVA a oferta dentro dele. Poderia ser um aviso
+         separado seguido de uma oferta, e seria pior: dependeria da ordem de
+         chegada de duas mensagens, e "o par foi recriado depois da oferta"
+         volta a ser a mesma tela preta. Uma mensagem só não tem ordem para
+         errar.
+         ==================================================================== */
+      recomecar(id) {
+        const antigo = pares.get(id);
+        if (antigo) { try { antigo.pc.close(); } catch { } pares.delete(id); }
+
+        const p = par(id);
+        (async () => {
+          try {
+            p.fazendoOferta = true;
+            await p.pc.setLocalDescription();
+            mandarSinal(id, "recomeco", p.pc.localDescription.toJSON());
+          } catch (e) {
+            aoErro?.(e);
+          } finally {
+            p.fazendoOferta = false;
+          }
+        })();
+        return p;
+      },
+
       convidar(id) {
         const p = par(id);
         /* `onnegotiationneeded` dispara sozinho ao acrescentar as trilhas.
@@ -744,6 +785,34 @@
          RECEBER SINAL — negociação perfeita
          ==================================================================== */
       async receber(de, tipo, dados) {
+        /* ==================================================================
+           O RECOMEÇO CHEGOU
+
+           Fora do `try` e antes de qualquer outra coisa, porque a primeira
+           providência é jogar fora a conexão antiga — inclusive, e
+           principalmente, quando ela está saudável. Uma conexão viva com o
+           certificado que não vale mais é exatamente o caso que precisa
+           morrer aqui.
+
+           Sem `fazendoOferta`, a negociação perfeita trataria isto como
+           colisão e o lado rude descartaria a oferta. Um par recém-nascido
+           não colide com nada: ele não tem oferta própria em curso.
+           ================================================================== */
+        if (tipo === "recomeco") {
+          const antigo = pares.get(de);
+          if (antigo) { try { antigo.pc.close(); } catch { } pares.delete(de); }
+          const novo = par(de);
+          try {
+            await novo.pc.setRemoteDescription(dados);
+            await novo.pc.setLocalDescription();
+            mandarSinal(de, "resposta", novo.pc.localDescription.toJSON());
+          } catch (e) {
+            aoErro?.(e);
+          }
+          aoMudar();
+          return;
+        }
+
         const p = par(de);
         const pc = p.pc;
 
@@ -773,7 +842,13 @@
             await pc.setRemoteDescription(dados);
             await pc.setLocalDescription();
             mandarSinal(de, "resposta", pc.localDescription.toJSON());
+            return;
           }
+
+          /* Tipo que este cliente não conhece é IGNORADO, não é erro. Durante
+             um deploy as duas pontas ficam em versões diferentes por alguns
+             minutos, e uma reunião em curso não pode quebrar porque o outro
+             lado já sabe uma palavra nova. */
         } catch (e) {
           aoErro?.(e);
         }
@@ -915,6 +990,26 @@
     receberChamada(m) {
       const v = this.video;
       if (!v) return;
+
+      /* ====================================================================
+         ESTA ABA JÁ ENTREGOU A REUNIÃO
+
+         O socket daqui continua aberto — esta aba continua sendo um cliente de
+         chat, e é ele que segura o lugar da pessoa na chamada enquanto ela
+         atende pela janela separada. Mas o servidor publica para TODAS as
+         conexões de uma pessoa, então a sinalização destinada à janela chega
+         aqui também.
+
+         Sem esta linha, esta aba responderia às ofertas dirigidas à janela: o
+         outro lado receberia DUAS respostas para a mesma pergunta, vindas do
+         mesmo id de usuário, e a negociação embaralha — com o agravante de
+         que a resposta errada vem de conexões que já foram fechadas.
+
+         O toque de chamada nova passa: quem entregou uma reunião continua
+         podendo receber outra. É só a reunião entregue que não é mais assunto
+         desta aba.
+         ==================================================================== */
+      if (v.entregue && m.t !== "cham.toca") return;
 
       switch (m.t) {
         case "cham.toca": {
@@ -2415,6 +2510,34 @@
         }
       };
       acoes.push(abrir);
+
+      /* ==================================================================
+         ABRIR JÁ NA JANELA SEPARADA
+
+         O caminho mais barato de todos, e o que vale ensinar a quem atende:
+         começando na janela, não há conexão nenhuma para refazer depois. A
+         transferência no meio da reunião existe para quem esqueceu — não
+         para ser o costume.
+
+         Esta aba abre a sala e NÃO monta a chamada: quem a monta é a janela.
+         ================================================================== */
+      const naJanela = criar("button", { type: "button", texto: "⇱ Em janela",
+        title: "Abrir a reunião numa janela separada, deixando esta aba livre" });
+      naJanela.onclick = async () => {
+        naJanela.disabled = true;
+        try {
+          const r = await this.api("/salas/" + s.id + "/abrir", { metodo: "POST" });
+          const id = (r.chamada || r)?.id;
+          if (!id) throw new Error("A sala abriu, mas sem reunião.");
+          this.abrirEmJanelaSeparada(id);
+          this.carregarSalas();
+        } catch (e) {
+          this.mostrarFaixa(e.message, true);
+        } finally {
+          naJanela.disabled = false;
+        }
+      };
+      acoes.push(naJanela);
     } else if (viva && s.chamadaViva) {
       const voltar = criar("button", { classe: "forte", type: "button", texto: "Entrar" });
       voltar.onclick = async () => {
@@ -2506,6 +2629,265 @@
 
 
   /* ==========================================================================
+     9b. A REUNIÃO NUMA JANELA QUE SOBREVIVE À NAVEGAÇÃO
+
+     Este bloco existe para um pedido de trabalho muito concreto: atender por
+     vídeo e, ao mesmo tempo, abrir o prontuário e anotar. Navegar é o que o
+     sistema inteiro faz — e navegar destrói o contexto JavaScript da página,
+     levando junto o socket e todas as RTCPeerConnection.
+
+     A janela flutuante (seção 10) NÃO resolve isso, e é importante não
+     confundir as duas. Ela empresta os NÓS DO DOM para outra janela; os
+     objetos que fazem a reunião acontecer continuam no contexto da aba de
+     origem. A janela flutuante morre junto com a aba que a abriu.
+
+     Aqui a reunião MUDA DE DONO. A janela nova é um contexto de navegação
+     independente, com o próprio socket e as próprias conexões — e a aba de
+     origem fica livre para ir a qualquer lugar, inclusive para lugar nenhum.
+
+     ---------------------------------------------------------------------------
+     POR QUE ISTO FUNCIONA (e por que quase não funcionava)
+
+     O servidor tira a pessoa da reunião quando o socket dela cai. Se fosse
+     assim, navegar na aba de origem tiraria a pessoa da chamada — e a janela
+     nova ficaria sozinha, conectada a uma reunião da qual seu dono acabou de
+     ser removido.
+
+     Não é assim: `websocket.js` só chama `socketCaiu` quando cai a ÚLTIMA
+     conexão daquela pessoa. Com esta janela aberta, sempre sobra uma. Sem essa
+     linha — escrita muito antes, para outro motivo — esta funcionalidade seria
+     impossível sem mexer no servidor.
+     ========================================================================== */
+
+  const CANAL_REUNIAO = "lachat-reuniao";
+
+  function canalDaReuniao() {
+    try {
+      return typeof BroadcastChannel === "function" ? new BroadcastChannel(CANAL_REUNIAO) : null;
+    } catch { return null; }
+  }
+
+  /* ------------------------------------------------------------------------
+     ASSUMIR — chamado pela janela nova, por `janela.js`
+
+     `transferida` diz se alguém estava segurando esta reunião. É a diferença
+     entre entrar (ninguém tem conexão comigo) e ASSUMIR (todos têm conexão com
+     um contexto que acabou de morrer, e ela precisa ser refeita do zero).
+     ------------------------------------------------------------------------ */
+  LaChat.prototype.assumirChamada = async function (chamadaId, { transferida, canal } = {}) {
+    this._canalReuniao = canal || canalDaReuniao();
+
+    /* A identidade e o socket, como em qualquer cliente: esta janela é um
+       cliente inteiro, não um espelho da aba de origem.
+
+       E ANTES de marcar `aberto`: marcar dispara um segundo `iniciar()` pelo
+       `attributeChangedCallback`, e duas partidas simultâneas para o mesmo
+       trabalho é exatamente a corrida que este arquivo não precisa ter. */
+    if (!this.estado.eu) await this.iniciar();
+    this.setAttribute("aberto", "");
+
+    /* ======================================================================
+       SEM SABER QUEM SOU, NÃO SE MONTA REUNIÃO
+
+       Esta linha nasceu de um defeito observado: com `estado.eu` nulo, a malha
+       percorre a lista de participantes e não reconhece a PRÓPRIA pessoa nela
+       — então abre uma conexão WebRTC de alguém para si mesmo. A tela não
+       acusa nada, o console fica limpo, e o sintoma é só a reunião não
+       funcionar direito.
+
+       Parar aqui transforma isso numa frase que a pessoa consegue agir:
+       "entre de novo no sistema". `janela.js` trata o 401 exatamente assim.
+       ====================================================================== */
+    if (!this.estado.eu?.id) {
+      const e = new Error("Sua sessão não foi reconhecida nesta janela.");
+      e.status = 401;
+      throw e;
+    }
+
+    await this.esperarSocket(5000);
+
+    /* `entrar` é idempotente para quem já está dentro (`r.repetido` no
+       servidor): numa transferência a pessoa NUNCA saiu da chamada, então
+       ninguém vê "fulano saiu" seguido de "fulano entrou". A reunião não fica
+       sabendo que mudou de janela — só as conexões ficam. */
+    const r = await this.api("/chamadas/" + chamadaId + "/entrar", { metodo: "POST" });
+    await this.montarChamada(r);
+
+    if (transferida) this.refazerParesAposEntrega();
+  };
+
+  /* ------------------------------------------------------------------------
+     REFAZER OS PARES
+
+     Só na transferência, e para todo mundo que está dentro. O outro lado tem
+     uma conexão viva com o contexto anterior; `reconvidar` olharia para ela,
+     veria "connected" e não faria nada — deixando a pessoa na lista, sem
+     imagem, para sempre.
+     ------------------------------------------------------------------------ */
+  LaChat.prototype.refazerParesAposEntrega = function () {
+    const v = this.video;
+    if (!v?.malha) return;
+    for (const p of v.participantes.values()) {
+      if (p.id === this.estado.eu?.id || p.estado !== "dentro") continue;
+      try { v.malha.recomecar(p.id); } catch { }
+    }
+  };
+
+  /* Fechar a janela com a aba de origem ainda aberta deixaria a pessoa
+     "dentro" para os outros — o socket da aba de origem segura o lugar. */
+  LaChat.prototype.avisarQueSaiu = function () {
+    const id = this.video?.chamada?.id;
+    if (!id) return;
+    try {
+      /* `keepalive` é o que faz o pedido sobreviver ao fechamento da janela.
+         `sendBeacon` seria o reflexo, e não serve: ele não deixa mandar o
+         cabeçalho de CSRF, e o pedido morreria com 403. */
+      fetch(this.base + "/chamadas/" + id + "/sair", {
+        method: "POST", keepalive: true, credentials: "same-origin",
+        headers: { "X-Chat-Csrf": this.csrf() },
+      });
+    } catch { }
+  };
+
+  /* ------------------------------------------------------------------------
+     ENTREGAR — chamado na aba de ORIGEM
+
+     A ordem aqui é a única que não perde reunião:
+
+       1. abre a janela (síncrono, dentro do clique — senão o bloqueador de
+          pop-up recusa);
+       2. se foi bloqueada, PARA. Nada foi desfeito, a reunião continua aqui;
+       3. só quando a janela nova diz "estou assumindo" é que esta aba solta as
+          conexões.
+
+     A versão ingênua faz o contrário — sai da chamada e depois abre a janela —
+     e nela um bloqueador de pop-up custa a reunião que a pessoa estava
+     conduzindo.
+     ------------------------------------------------------------------------ */
+  LaChat.prototype.abrirEmJanelaSeparada = function (chamadaId) {
+    const id = chamadaId || this.video?.chamada?.id;
+    if (!id) return;
+
+    const alvo = this.base + "/janela?c=" + encodeURIComponent(id);
+
+    /* Nome fixo por chamada: clicar duas vezes traz a janela que já existe
+       para a frente, em vez de abrir uma segunda que brigaria com a primeira
+       pela mesma reunião. */
+    const janela = window.open(alvo, "lachat-reuniao-" + id,
+      "width=1024,height=700,menubar=no,toolbar=no,location=no,status=no");
+
+    if (!janela) {
+      this.mostrarFaixa(
+        "O navegador bloqueou a janela. Permita pop-ups para este site e tente de novo.",
+        true);
+      return;
+    }
+
+    try { janela.focus(); } catch { }
+
+    /* A partir daqui esta aba só espera ser chamada. Se a janela nova não
+       conseguir entrar — sessão expirada, vídeo desligado — ela nunca pede a
+       entrega, e a reunião continua acontecendo aqui. Falhar é não mudar
+       nada. */
+    this.escutarPedidoDeEntrega(id);
+  };
+
+  LaChat.prototype.escutarPedidoDeEntrega = function (chamadaId) {
+    if (this._entregando === chamadaId) return;
+    this._entregando = chamadaId;
+
+    const canal = this._canalReuniao || (this._canalReuniao = canalDaReuniao());
+    if (!canal) {
+      /* Sem BroadcastChannel não há como combinar a troca. A janela nova vai
+         entrar assim mesmo depois do tempo de espera dela, e as duas ficariam
+         na mesma reunião com o mesmo id. Melhor dizer que não dá. */
+      this.mostrarFaixa("Este navegador não permite mover a reunião de janela.", true);
+      return;
+    }
+
+    const ouvir = (ev) => {
+      const m = ev.data;
+      if (m?.t !== "assumir" || m.chamada !== chamadaId) return;
+      canal.removeEventListener("message", ouvir);
+      this._entregando = null;
+      this.entregarReuniao(chamadaId, canal);
+    };
+
+    canal.addEventListener("message", ouvir);
+
+    /* A escuta não fica de pé para sempre: se a janela foi fechada antes de
+       carregar, esta aba não pode ficar entregando a reunião a qualquer
+       "assumir" que aparecer meia hora depois. */
+    setTimeout(() => {
+      canal.removeEventListener("message", ouvir);
+      if (this._entregando === chamadaId) this._entregando = null;
+    }, 30000);
+  };
+
+  /* ------------------------------------------------------------------------
+     SOLTAR AS CONEXÕES — sem sair da chamada
+
+     A diferença é tudo. `sairDaChamada` avisa o servidor, e o servidor
+     encerra a chamada quando sobra uma pessoa só — numa consulta a dois, a
+     reunião acabaria no meio da transferência.
+
+     Aqui a pessoa continua `dentro`: o que morre são as conexões desta aba. O
+     lugar dela na reunião é segurado pelo socket, que continua aberto porque
+     esta aba continua sendo um cliente de chat.
+     ------------------------------------------------------------------------ */
+  LaChat.prototype.entregarReuniao = function (chamadaId, canal) {
+    const v = this.video;
+
+    if (v?.chamada?.id === chamadaId) {
+      /* A janela flutuante, se estiver aberta, some junto: ela mostra vídeos
+         que estão prestes a não existir mais. */
+      try { this.fecharJanelaDaReuniao?.(); } catch { }
+
+      clearInterval(v.timer);
+      clearTimeout(v.paciencia);
+      v.timer = null;
+      try { v.malha?.encerrar(); } catch { }
+      try { v.detector?.encerrar(); } catch { }
+
+      /* `entregue` faz esta aba ignorar a sinalização que continuar chegando
+         pelo socket dela. Sem isto, ela responderia às ofertas destinadas à
+         janela nova — duas respostas para a mesma pergunta, vindas do mesmo
+         id, e a negociação do outro lado embaralha. */
+      v.entregue = true;
+      v.chamada = null;
+      v.participantes.clear();
+    }
+
+    this.pintarChamada();
+    this.mostrarAvisoDeEntrega();
+
+    /* Só agora a janela nova pode entrar: as conexões daqui já morreram. */
+    try { canal.postMessage({ t: "livre", chamada: chamadaId }); } catch { }
+  };
+
+  LaChat.prototype.mostrarAvisoDeEntrega = function () {
+    if (!this.el.painel) return;
+
+    /* Reusa o aviso da janela flutuante — mesmo lugar, mesmo formato — com o
+       texto trocado, porque o que se pode fazer aqui é o OPOSTO. Lá a frase
+       é "procure a janela flutuante"; aqui é "pode ir embora desta aba". */
+    this.mostrarReuniaoNoutraJanela(true);
+
+    const caixa = this.el.chamadaFora;
+    if (!caixa) return;
+    const b = caixa.querySelector("b");
+    const p = caixa.querySelector("p");
+    const botao = caixa.querySelector("button");
+    if (b) b.textContent = "A reunião está na janela separada";
+    if (p) p.textContent = "Ela continua acontecendo lá, por conta própria. "
+      + "Esta aba está livre: abra o prontuário, anote, navegue à vontade.";
+    /* "Trazer de volta" não existe aqui. A reunião não está emprestada — ela
+       MUDOU de dono, e as conexões desta aba já foram fechadas. Um botão que
+       promete desfazer o que não se desfaz é pior que botão nenhum. */
+    if (botao) botao.hidden = true;
+  };
+
+  /* ==========================================================================
      10. A REUNIÃO EM JANELA PRÓPRIA
 
      O anfitrião conduz a reunião numa gaveta de 380 px, ao lado da lista de
@@ -2593,12 +2975,37 @@
       caixa.appendChild(copiar);
     }
 
+    /* ====================================================================
+       DUAS JANELAS DIFERENTES, E A DIFERENÇA É REAL
+
+         ⧉  FLUTUANTE — fica acima de tudo, ótima para não perder o rosto de
+            vista. Mas é emprestada por ESTA aba: a reunião continua morando
+            aqui, e morre se esta aba navegar.
+
+         ⇱  SEPARADA — a reunião MUDA de janela. Esta aba fica livre para ir
+            ao prontuário, anotar, navegar o sistema inteiro.
+
+       Ter as duas parece redundante e não é: elas resolvem coisas opostas, e
+       juntas resolvem o caso completo — na janela separada o ⧉ continua
+       existindo, e ali ele nunca morre, porque aquela janela não navega.
+
+       Dentro da própria janela separada o ⇱ some: já se está nela.
+       ==================================================================== */
     if (TEM_JANELA) {
       caixa.appendChild(criar("button", {
         type: "button", texto: "⧉",
-        "aria-label": "Abrir a reunião em outra janela",
-        title: "Abrir em outra janela",
+        "aria-label": "Janela flutuante, sempre por cima",
+        title: "Janela flutuante — fica por cima, mas presa a esta aba",
         onclick: () => this.abrirReuniaoEmJanela(),
+      }));
+    }
+
+    if (this.modo !== "janela" && v?.chamada?.id) {
+      caixa.appendChild(criar("button", {
+        type: "button", texto: "⇱",
+        "aria-label": "Mover a reunião para uma janela separada",
+        title: "Janela separada — libera esta aba para usar o sistema",
+        onclick: () => this.abrirEmJanelaSeparada(v.chamada.id),
       }));
     }
 

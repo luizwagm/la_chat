@@ -139,6 +139,21 @@
 :host([modo="fullpage"]) .moldura { position: relative; width: 100%; height: 100%; }
 :host([modo="fullpage"]) .painel { width: 100%; height: 100%; }
 
+/* O modo JANELA: a reunião ocupa a janela inteira e nada mais aparece.
+
+   Não é o fullpage com outro nome. No fullpage o chat é o aplicativo — lista
+   de conversas, abas, busca. Aqui a janela existe para UMA reunião: a lista ao
+   lado seria um convite a clicar nela e perder de vista o que importa, num
+   espaço que já é estreito. Quem quer o chat tem a aba de origem, que continua
+   lá e agora pode navegar. */
+:host([modo="janela"]) .moldura { position: relative; width: 100%; height: 100%; padding: 0; }
+:host([modo="janela"]) .painel {
+  width: 100%; height: 100%; max-width: none; max-height: none;
+  border-radius: 0; border: 0;
+}
+:host([modo="janela"]) .barra { display: none; }
+:host([modo="janela"]) .principal { width: 100%; }
+
 /* Quem prefere menos movimento não recebe movimento. */
 @media (prefers-reduced-motion: reduce) {
   .painel { animation: none !important; }
@@ -871,7 +886,7 @@
     connectedCallback() {
       if (!this.hasAttribute("modo")) this.setAttribute("modo", "modal");
       if (!this.montado) { this.montar(); this.montado = true; }
-      if (this.modo === "fullpage") this.setAttribute("aberto", "");
+      if (this.modo === "fullpage" || this.modo === "janela") this.setAttribute("aberto", "");
       if (this.hasAttribute("aberto") || !this.hasAttribute("manual")) this.iniciar();
     }
 
@@ -889,7 +904,12 @@
     }
 
     abrir() { this.setAttribute("aberto", ""); }
-    fechar() { if (this.modo !== "fullpage") this.removeAttribute("aberto"); }
+    fechar() {
+      /* Numa janela dedicada, "fechar o chat" deixaria a pessoa olhando para
+         uma janela vazia sem entender o que aconteceu — e a reunião
+         continuaria acontecendo atrás dela. Quem fecha esta janela é o X. */
+      if (this.modo !== "fullpage" && this.modo !== "janela") this.removeAttribute("aberto");
+    }
 
     /* ====================================================================
        ESTRUTURA — escrita por nós, constante, sem conteúdo de usuário.
@@ -1121,7 +1141,24 @@
        7. CICLO DE VIDA
        ==================================================================== */
     async iniciar() {
-      if (this.iniciando) return;
+      /* ================================================================
+         DUAS CHAMADAS AO MESMO TEMPO SÃO O CASO NORMAL
+
+         `aberto` dispara `iniciar()` pelo `attributeChangedCallback`, e quem
+         abre o chat normalmente também chama `iniciar()` — as duas coisas
+         acontecem no mesmo instante.
+
+         A versão anterior devolvia `undefined` à segunda chamada. Um `await`
+         nela terminava IMEDIATAMENTE, com `estado.eu` ainda nulo, e quem
+         esperava seguia como se a identidade já estivesse pronta.
+
+         Custou uma investigação: a janela da reunião dizia "sua sessão
+         expirou" com a sessão perfeitamente válida — e só às vezes, porque
+         depende de quem chega primeiro. Devolver a promessa em curso faz a
+         segunda chamada esperar o trabalho da primeira, que é o que "await"
+         sempre pareceu prometer.
+         ================================================================ */
+      if (this.iniciando) return this.iniciando;
 
       /* ================================================================
          MODO SALA — a reunião por link.
@@ -1145,18 +1182,40 @@
         return;
       }
 
-      this.iniciando = true;
+      let concluir;
+      this.iniciando = new Promise((r) => { concluir = r; });
       this.mostrarFaixa("Conectando…");
 
       try {
-        /* 1. o passe vem do HOSPEDEIRO, que sabe quem está logado. */
-        const rp = await fetch(this.urlDoPasse, { credentials: "include" });
-        if (!rp.ok) throw new Error("O site não confirmou quem é você.");
-        const { passe } = await rp.json();
-        if (!passe) throw new Error("O site não confirmou quem é você.");
+        /* ================================================================
+           A JANELA DA REUNIÃO JÁ TEM SESSÃO — e não tem hospedeiro
 
-        /* 2. o passe vira sessão do chat. */
-        await this.api("/entrar", { metodo: "POST", corpo: { passe } });
+           O passe existe porque o chat não sabe quem está logado no SITE: ele
+           pergunta ao hospedeiro, que responde com uma credencial assinada.
+
+           Esta janela é servida pelo próprio chat. Não há hospedeiro para
+           perguntar — `urlDoPasse` apontaria para um endereço que ninguém
+           atende, e o resultado seria "O site não confirmou quem é você" numa
+           janela que está com o cookie de sessão válido na mão.
+
+           E ela está: a janela foi aberta pela mesma origem da aba que a
+           abriu, então o cookie viaja. O que falta não é identidade, é só não
+           pedi-la de novo.
+
+           Sem esta saída o defeito era silencioso e feio: `estado.eu` ficava
+           nulo, e aí a malha não reconhecia a própria pessoa na lista de
+           participantes — abrindo uma conexão WebRTC de alguém PARA SI MESMO.
+           ================================================================ */
+        if (this.modo !== "janela") {
+          /* 1. o passe vem do HOSPEDEIRO, que sabe quem está logado. */
+          const rp = await fetch(this.urlDoPasse, { credentials: "include" });
+          if (!rp.ok) throw new Error("O site não confirmou quem é você.");
+          const { passe } = await rp.json();
+          if (!passe) throw new Error("O site não confirmou quem é você.");
+
+          /* 2. o passe vira sessão do chat. */
+          await this.api("/entrar", { metodo: "POST", corpo: { passe } });
+        }
 
         /* 3. quem sou eu + conversas */
         const eu = await this.api("/eu");
@@ -1178,7 +1237,11 @@
       } catch (e) {
         this.mostrarFaixa(e.message || "Não foi possível abrir o chat.", true);
       } finally {
-        this.iniciando = false;
+        /* Liberar ANTES de limpar: quem está esperando segura a promessa, não
+           o campo. Na ordem inversa, uma chamada que chegasse entre as duas
+           linhas pegaria `null` e recomeçaria tudo. */
+        concluir();
+        this.iniciando = null;
       }
     }
 

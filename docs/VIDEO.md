@@ -279,6 +279,11 @@ nginx além do que o chat já exige.
 | `cham.disp` | ↔ | mudo, câmera, tela |
 | `cham.sinal` | ↔ | SDP e candidatos ICE |
 
+Dentro de `cham.sinal` há quatro tipos: `oferta`, `resposta`, `candidato` e
+`recomeco`. Tipo desconhecido é **ignorado, não é erro** — durante um deploy as
+duas pontas ficam em versões diferentes por alguns minutos, e uma reunião em
+curso não pode quebrar porque o outro lado já sabe uma palavra nova.
+
 **Só o `sinal` vai pelo socket.** Iniciar, entrar, sair e mudo vão por HTTP,
 onde já existem CSRF, limitador e tratamento de erro. O sinal é a exceção
 porque é o único de alta frequência: montar uma malha de seis pessoas troca
@@ -294,6 +299,83 @@ instante), e aí vale o padrão de *negociação perfeita*: um lado é **educado
 cede, o outro ignora a oferta fora de hora. O papel sai da comparação dos ids —
 sem combinar nada, os dois lados chegam a conclusões opostas, que é exatamente
 o necessário.
+
+### `recomeco` — a mesma pessoa, de outro contexto
+
+Quando alguém move a reunião para uma janela separada, quem fala continua sendo a
+mesma pessoa, com o mesmo id — mas a conexão é outra: outro objeto, outro
+certificado DTLS, outra credencial de ICE.
+
+`reconvidar` não serve aí. Ele reoferece sobre a conexão que existe, e o outro
+lado tem uma conexão **estabelecida** com o certificado antigo. Renegociar
+trocando o certificado no meio não é suportado: o navegador recusa, e o sintoma
+é a pessoa aparecer na lista sem imagem nenhuma — sem erro, sem aviso.
+
+Então não se renegocia: destrói-se e começa de novo, dos dois lados. E o sinal
+**leva a oferta dentro dele**. Um aviso separado seguido de uma oferta dependeria
+da ordem de chegada de duas mensagens, e "o par foi recriado depois da oferta"
+volta a ser a mesma tela preta. Uma mensagem só não tem ordem para errar.
+
+---
+
+## As duas janelas, e a diferença entre elas
+
+| | `⧉` flutuante | `↱` separada |
+|---|---|---|
+| API | `documentPictureInPicture` | `window.open` |
+| Fica por cima de tudo | **sim** | não |
+| Sobrevive à navegação da aba | **não** | **sim** |
+| Onde a reunião mora | na aba de origem | na própria janela |
+| Navegadores | Chrome e Edge | todos |
+
+A flutuante empresta os **nós do DOM**; o socket e as `RTCPeerConnection`
+continuam no contexto da aba que a abriu, e navegar destrói esse contexto. Ela
+resolve "quero ver maior sem perder de vista", não "quero usar o sistema
+enquanto atendo".
+
+A separada é um **contexto de navegação independente**: `<prefixo>/janela?c=<id>`,
+servida por este serviço, com socket e conexões próprios. A aba de origem fica
+livre para abrir prontuário, anotar, ir a qualquer lugar — inclusive ser fechada.
+
+Ter as duas não é redundância: dentro da janela separada o `⧉` continua
+existindo, e ali ele nunca morre, porque aquela janela não navega. Juntas
+resolvem o caso completo — vídeo por cima do prontuário, enquanto se digita.
+
+### A ordem da transferência
+
+1. A janela abre — **síncrono, dentro do clique**, senão o bloqueador de pop-up
+   recusa.
+2. Bloqueada? **Para.** Nada foi desfeito; a reunião continua onde estava.
+3. A janela nova grita `assumir` num `BroadcastChannel`.
+4. A aba de origem solta as conexões — **sem avisar o servidor que saiu** — e
+   responde `livre`.
+5. A janela entra e manda `recomeco` para todos.
+
+O passo 4 é o delicado. Sair de verdade faria o servidor encerrar a chamada ao
+sobrar uma pessoa só: numa consulta a dois, a reunião morreria durante a própria
+transferência. A pessoa continua `dentro` o tempo todo; o que morre são as
+conexões daquela aba, e o lugar dela é segurado pelo socket que continua aberto.
+
+A aba entregue marca `entregue = true` e passa a **ignorar a sinalização** que
+ainda chega por ela — o servidor publica para todas as conexões de uma pessoa, e
+sem isso a aba responderia às ofertas dirigidas à janela, com conexões que já
+foram fechadas.
+
+> **O que torna tudo isso possível** é uma linha escrita muito antes, para outro
+> motivo: `websocket.js` só chama `socketCaiu` quando cai a **última** conexão da
+> pessoa. Com a janela aberta, sempre sobra uma — então navegar na aba de origem
+> não tira ninguém da reunião.
+
+### A janela não pede passe
+
+Ela é servida pelo próprio chat, então não há hospedeiro a quem perguntar quem
+está logado. E não precisa: a janela foi aberta pela mesma origem da aba, e o
+cookie de sessão viaja com ela. O que falta não é identidade — é só não pedi-la
+de novo.
+
+Sem essa saída o defeito era silencioso: `estado.eu` ficava nulo, a malha não
+reconhecia a própria pessoa na lista de participantes, e **abria uma conexão
+WebRTC de alguém para si mesmo**.
 
 ---
 

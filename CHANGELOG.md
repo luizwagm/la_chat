@@ -5,6 +5,91 @@ recurso, 3ª para correção. Nenhuma casa para no 9.
 
 ---
 
+## 0.24.0 — 24/08/2026 · a reunião numa janela que sobrevive à navegação
+
+Atender por vídeo e, ao mesmo tempo, abrir o prontuário e anotar. Até agora isso
+não era possível — e o motivo era estrutural, não um defeito.
+
+### O que impedia
+
+A reunião vivia no contexto JavaScript da página. **Navegar destrói esse
+contexto**, e leva junto o socket e todas as `RTCPeerConnection`. Qualquer clique
+que saísse da página derrubava a chamada.
+
+A janela flutuante (`⧉`) não resolvia, e é importante não confundir as duas: o
+`documentPictureInPicture` empresta os **nós do DOM** para outra janela, mas os
+objetos que fazem a reunião acontecer continuam na aba de origem. Ela morre junto
+com quem a abriu.
+
+### Como ficou
+
+Um botão novo, **`↱` janela separada**, abre a reunião num contexto de navegação
+independente — socket próprio, conexões próprias. A partir daí a aba de origem
+pode ir a qualquer lugar, inclusive ser fechada.
+
+Ele aparece em **dois momentos**:
+
+* **`↱ Em janela`, na lista de Reuniões** — a reunião nasce já na janela. É o
+  caminho barato, e o que vale ensinar a quem atende: sem ninguém conectado
+  ainda, não há nada a refazer.
+* **`↱` dentro da reunião** — transfere a chamada em andamento, para quem
+  esqueceu de começar assim.
+
+As duas janelas continuam existindo porque resolvem coisas opostas: a flutuante
+fica **por cima** de tudo; a separada **liberta a aba**. E juntas fecham o caso
+completo — dentro da janela separada o `⧉` continua funcionando, e ali ele nunca
+morre, porque aquela janela não navega.
+
+### A ordem que não perde reunião
+
+A janela abre **primeiro**, dentro do clique. Só quando ela diz "estou assumindo"
+é que a aba de origem solta as conexões. A versão ingênua faz o contrário — sai
+da chamada e depois abre a janela — e nela um bloqueador de pop-up custa a
+reunião que a pessoa estava conduzindo. Aqui, falhar é não mudar nada.
+
+E **entregar não é sair**: a pessoa continua `dentro` da chamada o tempo todo. Se
+a aba avisasse o servidor que saiu, o servidor encerraria a chamada ao sobrar uma
+pessoa só — numa consulta a dois, a reunião morreria durante a própria
+transferência.
+
+### A malha aprendeu a recomeçar
+
+Cada participante é identificado pelo id do usuário, e o outro lado reaproveita a
+mesma conexão para aquele id. Numa transferência, a janela nova oferece com
+**outro certificado DTLS** sobre uma conexão estabelecida — e isso o navegador
+não aceita como renegociação. O sintoma seria a pessoa na lista, sem imagem, sem
+erro nenhum.
+
+Então não se renegocia: um sinal novo, `recomeco`, destrói o par e cria outro dos
+dois lados. Ele **leva a oferta dentro dele** — um aviso separado seguido de uma
+oferta dependeria da ordem de chegada de duas mensagens, e "o par foi recriado
+depois da oferta" é a mesma tela preta.
+
+### Duas correções que apareceram na verificação
+
+**A janela pedia passe a um hospedeiro que não existe.** Ela é servida pelo
+próprio chat, então `iniciar()` buscava a credencial num endereço que ninguém
+atende — com o cookie de sessão válido na mão. `estado.eu` ficava nulo, e aí a
+malha não reconhecia a própria pessoa na lista: **abriu uma conexão WebRTC de
+alguém para si mesmo.** Console limpo, nenhum erro.
+
+**`iniciar()` devolvia `undefined` à segunda chamada simultânea.** Marcar `aberto`
+dispara um `iniciar()`, e quem abre o chat chama outro — o `await` da segunda
+terminava na hora, com a identidade ainda nula. **Intermitente**, porque depende
+de quem chega primeiro: a janela dizia "sua sessão expirou" com a sessão
+perfeitamente válida. Agora a segunda chamada espera o trabalho da primeira.
+
+### O que sustenta tudo isso, e já estava lá
+
+O servidor tira a pessoa da reunião quando o socket cai — mas **só quando cai a
+última conexão dela**. Com a janela aberta, sempre sobra uma. Sem essa linha,
+escrita muito antes e para outro motivo, esta funcionalidade seria impossível sem
+mexer no servidor.
+
+**781 testes** verdes.
+
+---
+
 ## 0.23.0 — 24/08/2026 · o lápis de editar
 
 Passe o mouse sobre a **sua** mensagem e aparecem dois botões: **✏️ editar** e o

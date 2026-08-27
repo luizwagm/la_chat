@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow, noarchive">
+<meta name="referrer" content="no-referrer">
+<title>Reunião</title>
+
+<!-- ==========================================================================
+     A REUNIÃO EM JANELA PRÓPRIA — para quem é DA CASA
+
+     Esta página existe por um motivo só, e é um motivo de trabalho: quem
+     atende precisa usar o sistema enquanto conversa. Abrir o prontuário,
+     anotar, consultar o histórico — tudo isso é NAVEGAR, e navegar destrói o
+     contexto JavaScript da página.
+
+     A gaveta do chat mora dentro do site do cliente. Se a reunião mora ali
+     também, ela morre na primeira vez que a pessoa clica em qualquer link. O
+     "abrir em janela flutuante" não resolve: o `documentPictureInPicture`
+     empresta os NÓS do DOM, mas as `RTCPeerConnection` e o socket continuam
+     no contexto da aba de origem — e é esse contexto que a navegação mata.
+
+     Uma janela aberta com `window.open` é outra coisa: um contexto de
+     navegação INDEPENDENTE, com o próprio JavaScript, o próprio socket e as
+     próprias conexões. A aba de origem pode ir para onde quiser — inclusive
+     ser fechada — que a reunião continua aqui.
+
+     ---------------------------------------------------------------------------
+     AS TRÊS REGRAS DA PÁGINA DO CONVIDADO VALEM AQUI TAMBÉM
+
+     1. NADA É INTERPOLADO PELO SERVIDOR. O id da chamada vem do endereço, lido
+        pelo JavaScript. Não existe caminho de texto para HTML.
+     2. NENHUM SCRIPT INLINE — o comportamento mora em `janela.js`.
+     3. O TÍTULO É GENÉRICO. Ele vai para a barra de tarefas e para o histórico
+        do navegador, e nenhum dos dois é privado.
+
+     A diferença para `sala.html` é quem entra: lá é um estranho com um link,
+     aqui é alguém da empresa, com a sessão que já existe. O cookie é o mesmo
+     da aba de origem porque a origem é a mesma — não há login de novo.
+     ========================================================================== -->
+
+<style>
+  :root {
+    --fundo:   #0e1116;
+    --fundo-2: #161a21;
+    --fundo-3: #1e242d;
+    --linha:   #2b323d;
+    --tinta:   #e9ecf1;
+    --tinta-2: #a6aebc;
+    --tinta-3: #737c8c;
+    --acento:  #2c5cff;
+    --perigo:  #f87171;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0; height: 100%;
+    background: var(--fundo); color: var(--tinta);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Uma janela de reunião não rola. Se algo não couber, o certo é encolher —
+     barra de rolagem aqui significa que metade dos rostos está fora da tela. */
+  body { overflow: hidden; }
+
+  .tela {
+    display: none; position: absolute; inset: 0;
+    align-items: center; justify-content: center; padding: 24px;
+  }
+  .tela.vendo { display: flex; }
+  #reuniao.vendo { padding: 0; display: block; }
+
+  .cartao {
+    width: 100%; max-width: 420px; text-align: center;
+    background: var(--fundo-2); border: 1px solid var(--linha);
+    border-radius: 16px; padding: 30px 26px;
+  }
+
+  .marca {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 11.5px; font-weight: 600; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--tinta-2); margin-bottom: 18px;
+  }
+  .ponto {
+    width: 8px; height: 8px; border-radius: 50%; background: var(--acento);
+    box-shadow: 0 0 0 4px rgba(44, 92, 255, .18);
+  }
+
+  .pulso {
+    width: 44px; height: 44px; border-radius: 50%; margin: 0 auto 18px;
+    background: var(--acento); opacity: .9;
+    animation: bater 1.6s ease-in-out infinite;
+  }
+  @keyframes bater {
+    0%, 100% { transform: scale(.82); opacity: .55; }
+    50%      { transform: scale(1);   opacity: .95; }
+  }
+  /* Quem pediu menos movimento não recebe um coração pulsando na tela. */
+  @media (prefers-reduced-motion: reduce) { .pulso { animation: none; } }
+
+  h1 { font-size: 19px; font-weight: 650; margin: 0 0 8px; }
+  .sub { font-size: 14px; line-height: 1.55; color: var(--tinta-2); margin: 0; }
+  .rodape { font-size: 12px; color: var(--tinta-3); margin: 16px 0 0; }
+
+  .discreto {
+    font: inherit; font-size: 13px; font-weight: 600; margin-top: 18px;
+    padding: 8px 18px; border-radius: 9px; cursor: pointer;
+    background: transparent; color: var(--tinta-2); border: 1px solid var(--linha);
+  }
+  .discreto:hover { background: var(--fundo-3); color: var(--tinta); }
+
+  la-chat { display: block; width: 100%; height: 100%; }
+</style>
+</head>
+<body>
+
+  <!-- 1. abrindo ------------------------------------------------------- -->
+  <section class="tela vendo" id="tela-carregando">
+    <div class="cartao">
+      <div class="marca"><span class="ponto"></span> Reunião</div>
+      <div class="pulso"></div>
+      <h1>Abrindo a reunião…</h1>
+      <p class="sub">Um instante.</p>
+    </div>
+  </section>
+
+  <!-- 2. não deu ------------------------------------------------------- -->
+  <section class="tela" id="tela-recusa">
+    <div class="cartao">
+      <div class="marca">
+        <span class="ponto" style="background:var(--perigo);box-shadow:none"></span> Reunião
+      </div>
+      <h1 id="recusa-titulo">Não foi possível abrir</h1>
+      <p class="sub" id="recusa-msg">Volte para a aba de origem e tente de novo.</p>
+      <p class="rodape">Pode fechar esta janela.</p>
+    </div>
+  </section>
+
+  <!-- 3. a reunião ----------------------------------------------------- -->
+  <section class="tela" id="reuniao"></section>
+
+  <!-- 4. acabou -------------------------------------------------------- -->
+  <section class="tela" id="tela-fim">
+    <div class="cartao">
+      <div class="marca">
+        <span class="ponto" style="background:var(--tinta-3);box-shadow:none"></span> Reunião
+      </div>
+      <h1 id="fim-titulo">A reunião terminou</h1>
+      <p class="sub" id="fim-msg">Pode fechar esta janela.</p>
+      <button type="button" class="discreto" id="fechar">Fechar janela</button>
+    </div>
+  </section>
+
+  <script src="./cliente.js"></script>
+  <script src="./janela.js"></script>
+</body>
+</html>

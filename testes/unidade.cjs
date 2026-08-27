@@ -481,8 +481,22 @@ async function rodar() {
        é pior que botão nenhum. */
     P.ok(/const TEM_JANELA = [\s\S]{0,120}documentPictureInPicture/.test(fonte),
       "a existência do recurso é medida, não suposta");
-    P.ok(/if \(TEM_JANELA\) \{[\s\S]{0,400}Abrir em outra janela/.test(fonte),
-      "e o botão de nova janela só aparece onde o navegador sabe abri-la");
+    /* Casa pela CHAMADA, e não pelo texto do botão. A versão anterior olhava
+       para o rótulo, e quebrou no dia em que ele mudou — acusando um defeito
+       que não existia. O que precisa ser verdade é que o botão só exista onde a
+       API existe; como ele se chama na tela é outra conversa. */
+    P.ok(/if \(TEM_JANELA\) \{[\s\S]{0,400}abrirReuniaoEmJanela\(\)/.test(fonte),
+      "e o botão da janela flutuante só aparece onde o navegador sabe abri-la");
+
+    /* A JANELA SEPARADA É OUTRA COISA, e não depende de API nenhuma:
+       `window.open` existe em todo navegador. Se ela ficasse atrás do mesmo
+       `TEM_JANELA`, o Firefox e o Safari perderiam a única das duas que
+       resolve "quero usar o sistema enquanto atendo". */
+    const vista = corpoDe("botoesDeVista", fonte);
+    P.ok(/abrirEmJanelaSeparada/.test(vista),
+      "e a janela SEPARADA tem botão próprio");
+    P.ok(!/TEM_JANELA[\s\S]{0,200}abrirEmJanelaSeparada/.test(vista),
+      "que NÃO está atrás do documentPictureInPicture — window.open é universal");
   }
 
   /* ======================================================================
@@ -747,6 +761,129 @@ async function rodar() {
     const sabotado = corpoOnopen.replace("aoSocketAberto", "naoExiste");
     P.ok(!sabotado.includes("aoSocketAberto"),
       "e a trava ACUSA se o aviso for removido do onopen");
+  }
+
+  /* ======================================================================
+     `iniciar()` DEVOLVE O TRABALHO EM CURSO
+
+     Duas chamadas simultâneas são o caso NORMAL: marcar `aberto` dispara
+     `iniciar()` pelo `attributeChangedCallback`, e quem abre o chat também
+     chama `iniciar()`.
+
+     Devolvendo `undefined` à segunda, um `await` nela termina IMEDIATAMENTE,
+     com `estado.eu` ainda nulo — e quem esperava segue como se a identidade
+     estivesse pronta. O defeito é INTERMITENTE, porque depende de quem chega
+     primeiro: a janela da reunião dizia "sua sessão expirou" com a sessão
+     válida, e só quando a outra aba respondia rápido demais.
+
+     Este teste existe porque intermitente é o que ninguém consegue reproduzir
+     de propósito seis meses depois.
+     ====================================================================== */
+  P.secao("cliente: iniciar duas vezes espera o mesmo trabalho");
+
+  {
+    const fs8 = require("node:fs");
+    const path8 = require("node:path");
+    const nucleo8 = fs8.readFileSync(
+      path8.join(__dirname, "..", "publico", "la-chat.js"), "utf8");
+
+    P.ok(/if \(this\.iniciando\) return this\.iniciando;/.test(nucleo8),
+      "a segunda chamada devolve a promessa da primeira, e não `undefined`");
+    P.ok(!/if \(this\.iniciando\) return;/.test(nucleo8),
+      "e o retorno vazio, que terminava na hora, não voltou");
+    P.ok(/this\.iniciando = new Promise/.test(nucleo8),
+      "o campo guarda a promessa, e não um booleano");
+    P.ok(/concluir\(\);[\s\S]{0,200}this\.iniciando = null;/.test(nucleo8),
+      "e libera quem espera ANTES de limpar o campo");
+
+    /* Quem assume a reunião precisa ESPERAR de verdade — e só marcar `aberto`
+       depois, para não disparar a segunda partida. */
+    const video8 = fs8.readFileSync(
+      path8.join(__dirname, "..", "publico", "la-chat-video.js"), "utf8");
+    const iAss = video8.indexOf("LaChat.prototype.assumirChamada");
+    const assumir = iAss < 0 ? "" : video8.slice(iAss, iAss + 1400);
+    P.ok(assumir.indexOf("await this.iniciar()") < assumir.indexOf('setAttribute("aberto"'),
+      "a janela inicia ANTES de marcar `aberto` — marcar dispara outro iniciar");
+    P.ok(/if \(!this\.estado\.eu\?\.id\)/.test(assumir),
+      "e se ainda assim não houver identidade, PARA — sem ela a malha conecta consigo mesma");
+  }
+
+  /* ======================================================================
+     A REUNIÃO QUE MUDA DE JANELA
+
+     Três coisas sustentam esta funcionalidade, e nenhuma delas é visível numa
+     leitura rápida. Se qualquer uma cair, o sintoma NÃO é um erro: é a pessoa
+     na lista sem imagem, ou a reunião acabando sozinha no meio da consulta.
+
+       1. A ORDEM. A janela abre ANTES de esta aba soltar qualquer coisa. Ao
+          contrário, um bloqueador de pop-up custa a reunião em andamento.
+       2. NÃO SE SAI DA CHAMADA. Entregar não é sair — o servidor encerra a
+          chamada quando sobra uma pessoa só, e numa consulta a dois a reunião
+          morreria durante a própria transferência.
+       3. OS PARES SÃO REFEITOS. O outro lado tem conexão viva com o contexto
+          que morreu; renegociar trocando o certificado DTLS não é suportado.
+     ====================================================================== */
+  P.secao("cliente: a reunião muda de janela sem se perder");
+
+  {
+    const fs7 = require("node:fs");
+    const path7 = require("node:path");
+    const publico7 = path7.join(__dirname, "..", "publico");
+    const video7 = fs7.readFileSync(path7.join(publico7, "la-chat-video.js"), "utf8");
+    const janela7 = fs7.readFileSync(path7.join(publico7, "janela.js"), "utf8");
+
+    /* ---- 1. a ordem ---- */
+    const iAbrir = video7.indexOf("LaChat.prototype.abrirEmJanelaSeparada");
+    const abrir = iAbrir < 0 ? "" : video7.slice(iAbrir, iAbrir + 1400);
+    P.ok(iAbrir > 0, "existe o caminho para a janela separada");
+    P.ok(abrir.indexOf("window.open") < abrir.indexOf("escutarPedidoDeEntrega"),
+      "a janela abre ANTES de esta aba se comprometer a entregar");
+    P.ok(/if \(!janela\)/.test(abrir),
+      "e o pop-up bloqueado interrompe tudo — falhar é não mudar nada");
+
+    /* ---- 2. entregar não é sair ---- */
+    const iEnt = video7.indexOf("LaChat.prototype.entregarReuniao");
+    const entregar = iEnt < 0 ? "" : video7.slice(iEnt, iEnt + 1600);
+    P.ok(iEnt > 0, "existe a entrega da reunião");
+    P.ok(!/\/sair/.test(entregar),
+      "que NÃO avisa o servidor que saiu — sair encerraria a chamada a dois");
+    P.ok(entregar.includes("malha?.encerrar()"),
+      "mas fecha as conexões desta aba");
+    P.ok(entregar.includes("entregue = true"),
+      "e marca a aba para ignorar a sinalização que ainda chega por ela");
+    P.ok(entregar.indexOf("entregue = true") < entregar.indexOf("postMessage"),
+      "e só DEPOIS disso libera a janela nova a entrar");
+
+    /* A marca precisa ser LIDA em algum lugar, ou não vale nada. */
+    P.ok(/if \(v\.entregue/.test(video7),
+      "e a marca é conferida na chegada dos eventos de chamada");
+
+    /* ---- 3. os pares são refeitos ---- */
+    const iRec = video7.indexOf("      recomecar(id) {");
+    const recomecar = iRec < 0 ? "" : video7.slice(iRec, iRec + 900);
+    P.ok(iRec > 0, "a malha sabe recomeçar um par do zero");
+    P.ok(recomecar.includes("pares.delete(id)"),
+      "jogando fora a conexão antiga — inclusive quando ela está saudável");
+    P.ok(/mandarSinal\(id, "recomeco"/.test(recomecar),
+      "e o sinal LEVA a oferta dentro dele, sem depender de ordem de chegada");
+    P.ok(video7.includes('if (tipo === "recomeco")'),
+      "e o outro lado sabe recebê-lo");
+
+    P.ok(video7.includes("refazerParesAposEntrega"),
+      "a janela refaz os pares depois de assumir");
+    P.ok(/if \(transferida\) this\.refazerParesAposEntrega/.test(video7),
+      "SÓ quando houve transferência — começar na janela não tem par a refazer");
+
+    /* ---- o handshake, e por que não é um parâmetro no endereço ---- */
+    P.ok(janela7.includes('t: "assumir"') && janela7.includes('"livre"'),
+      "a janela PERGUNTA se alguém está entregando, em vez de confiar na URL");
+    P.ok(!/transferida\s*=\s*.*searchParams/.test(janela7),
+      "porque um parâmetro no endereço pode mentir — endereço copiado, aba já fechada");
+
+    /* A PROVA DE QUE O TESTE NÃO É VAZIO. */
+    const sabotado = entregar.split("entregue = true").join("naoExiste = true");
+    P.ok(!sabotado.includes("entregue = true"),
+      "e a trava acusa se a aba deixar de se marcar como entregue");
   }
 
   /* ======================================================================

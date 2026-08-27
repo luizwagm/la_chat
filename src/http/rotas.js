@@ -50,6 +50,42 @@ const CSP_DA_SALA = [
 
 let htmlDaSala = null;
 
+/* ==========================================================================
+   A PÁGINA DA JANELA DA REUNIÃO
+
+   Serve HTML estático, sem interpolar nada — o id da chamada vem no endereço e
+   quem o lê é o JavaScript. A mesma CSP apertada da página do convidado vale
+   aqui: sem `unsafe-inline` para script, `frame-ancestors 'none'`, e
+   `noindex` porque uma janela de reunião no índice de busca é um convite.
+
+   NÃO EXIGE SESSÃO PARA SER SERVIDA, e é deliberado: o HTML não contém
+   informação nenhuma. Quem exige sessão é a API que a página chama em seguida,
+   e é lá que o 401 aparece — com uma frase útil ("entre de novo na aba
+   principal") em vez de uma porta em branco.
+   ========================================================================== */
+function paginaDaJanela(res, conf) {
+  if (!conf.video?.ativo) return responder(res, 404, { erro: "Não encontrado." });
+
+  let html;
+  try {
+    html = fs.readFileSync(path.join(conf.caminhos.publico, "janela.html"));
+  } catch {
+    return responder(res, 500, { erro: "Página indisponível." });
+  }
+
+  res.writeHead(200, {
+    "Content-Type": "text/html; charset=utf-8",
+    "Content-Length": html.length,
+    "Content-Security-Policy": CSP_DA_SALA,
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "X-Robots-Tag": "noindex, nofollow, noarchive",
+    "Referrer-Policy": "no-referrer",
+    "Cache-Control": "no-store",
+  });
+  return res.end(html);
+}
+
 function paginaDaSala(res, codigo, conf) {
   /* Código fora de forma não chega a ler arquivo nenhum. */
   if (typeof codigo !== "string" || !/^[1-9A-HJ-NP-Za-km-z]{11}$/.test(codigo))
@@ -212,6 +248,12 @@ function criarRotas({ servico, chamadas, salas, sessoes, convidados, conf, porte
        respostas deliberadamente vagas: inexistente, revogada e expirada
        devolvem a MESMA frase, para tentativa e erro não virar mapa.
        ========================================================================== */
+    /* A janela da reunião. Antes da conferência de sessão, como a página do
+       convidado: é HTML sem informação, e é a API que vem depois que decide
+       quem entra. */
+    if (metodo === "GET" && p[0] === "janela" && p.length === 1)
+      return paginaDaJanela(res, conf);
+
     if (p[0] === "call" && p.length >= 2) {
       const codigo = p[1];
 
@@ -290,7 +332,11 @@ function criarRotas({ servico, chamadas, salas, sessoes, convidados, conf, porte
        DAQUI PARA BAIXO, TUDO EXIGE SESSÃO
        ========================================================================== */
     const publica = PUBLICAS.has(chave) || (metodo === "GET" && p[0] === "cliente.js")
-      || p[0] === "call";
+      || p[0] === "call"
+      /* Só o HTML. As rotas que a janela usa em seguida — `/eu`, `/bilhete`,
+         `/chamadas/:id/entrar` — continuam exigindo a sessão do funcionário,
+         que é o que separa esta janela da página do convidado. */
+      || (metodo === "GET" && p[0] === "janela" && p.length === 1);
 
     /* ==========================================================================
        QUEM É — e não apenas "há sessão?"

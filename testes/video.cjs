@@ -326,6 +326,65 @@ async function rodar() {
       "o cabo arrancado do Bruno encerra a reunião (sobrou uma pessoa)",
       JSON.stringify(estadoPos.dados.chamada));
 
+    /* ======================================================================
+       A JANELA SEPARADA
+
+       A reunião numa janela própria existe para que quem atende possa usar o
+       sistema enquanto conversa — abrir prontuário, anotar. Navegar destrói o
+       contexto JavaScript da aba, e com ele o socket e todas as conexões; a
+       janela flutuante não resolve, porque ela empresta os nós do DOM e deixa
+       os objetos onde estavam.
+       ====================================================================== */
+    P.secao("a reunião em janela separada");
+
+    {
+      const pagina = await pedir(chat.base + "/janela?c=" + chamadaId);
+      P.eq(pagina.status, 200, "a página da janela é servida");
+      P.ok(pagina.texto.includes("<la-chat") || pagina.texto.includes("janela.js"),
+        "e traz o script que monta o componente");
+
+      /* NADA INTERPOLADO. O id da chamada vai no endereço e quem o lê é o
+         JavaScript — não existe caminho de texto para HTML nesta página. */
+      P.ok(!pagina.texto.includes(chamadaId),
+        "o id da chamada NÃO aparece no HTML — nada é interpolado");
+
+      P.ok(/noindex/.test(pagina.cabecalhos["x-robots-tag"] || ""),
+        "com noindex — janela de reunião no índice de busca é convite",
+        pagina.cabecalhos["x-robots-tag"]);
+      P.eq(pagina.cabecalhos["x-frame-options"], "DENY",
+        "e não pode ser embutida em página nenhuma");
+      P.ok(!/unsafe-inline/.test(
+        (pagina.cabecalhos["content-security-policy"] || "").split("style-src")[0]),
+        "e a CSP não libera script inline",
+        pagina.cabecalhos["content-security-policy"]);
+
+      const script = await pedir(chat.base + "/janela.js");
+      P.eq(script.status, 200, "o script da janela é servido");
+      P.ok(script.texto.includes("assumirChamada"),
+        "e é o que assume a reunião nesta janela");
+
+      /* ==================================================================
+         AUTORIZADO PELO LUGAR, NÃO PELA EXTENSÃO
+
+         "Todo .js dentro de publico/ pode ser servido" é a regra que um dia
+         responde 200 a GET /server.js. Já aconteceu neste parque, noutro
+         projeto. Cada arquivo é nomeado, um por um — e este teste é o que
+         acusa se alguém trocar a lista por um padrão.
+         ================================================================== */
+      for (const proibido of ["/server.js", "/config.js", "/la-chat.js.map", "/../server.js"]) {
+        const r = await pedir(chat.base + proibido);
+        P.ok(r.status !== 200 || !String(r.texto).includes("require("),
+          `${proibido} NÃO entrega código do servidor`, String(r.status));
+      }
+
+      /* A janela é para quem é DA CASA. O HTML é público porque não diz nada;
+         quem exige sessão é a API que ela chama em seguida. */
+      const semSessao = await pedir(chat.base + "/chamadas/" + chamadaId + "/entrar",
+        { metodo: "POST" });
+      P.ok(semSessao.status === 401 || semSessao.status === 403,
+        "e sem sessão não se entra na chamada por ela", String(semSessao.status));
+    }
+
     /* ====================================================================== */
     P.secao("com o vídeo DESLIGADO");
 
@@ -341,6 +400,21 @@ async function rodar() {
       P.eq(estado.dados.ativo, false, "a instalação diz que o vídeo está desligado");
       P.recusa(await x.vai(`/conversas/${conv}/chamada`, { metodo: "POST" }), 400,
         "e iniciar chamada é recusado");
+
+      /* Sem reunião não há janela de reunião. Página e script somem juntos —
+         arquivo servido "por via das dúvidas" é superfície de graça.
+
+         A página responde 404 porque é servida antes da conferência de sessão.
+         O script cai no padrão-RECUSA do roteador e responde 401, exatamente
+         como `sala.js` já fazia. São números diferentes para a mesma verdade, e
+         o que se afirma aqui é a verdade: não sai código. */
+      P.eq((await pedir(semVideo.base + "/janela")).status, 404,
+        "a página da janela não existe nesta instalação");
+      const scriptSem = await pedir(semVideo.base + "/janela.js");
+      P.ok(scriptSem.status !== 200, "e o script dela não é servido",
+        String(scriptSem.status));
+      P.ok(!String(scriptSem.texto || "").includes("assumirChamada"),
+        "nem por engano, no corpo da recusa");
 
       /* ==================================================================
          A PROMESSA DO ARQUIVO SEPARADO

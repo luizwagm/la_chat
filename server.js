@@ -412,6 +412,41 @@ async function principal() {
     }
 
     /* ==========================================================================
+       O SCRIPT DA JANELA DA REUNIÃO
+
+       Mesmo padrão do script do convidado, e pelo mesmo motivo: a CSP daquela
+       página não tem `unsafe-inline` para script.
+
+       AUTORIZADO PELO LUGAR, e não pela extensão. A tentação é escrever "todo
+       .js dentro de publico/ pode ser servido" — e nesse dia `GET /server.js`
+       responde 200 com o código do servidor. Já aconteceu neste parque, em
+       outro projeto. Aqui cada arquivo é nomeado, um por um.
+       ========================================================================== */
+    if (req.method === "GET" && interno === "/janela.js" && CONF.video.ativo) {
+      const arquivoJanela = path.join(CONF.caminhos.publico, "janela.js");
+      try {
+        const info = await fs.promises.stat(arquivoJanela);
+        const etag = 'W/"' + info.size.toString(36) + "-"
+          + Math.floor(info.mtimeMs).toString(36) + '"';
+        if (req.headers["if-none-match"] === etag) {
+          res.writeHead(304, { ETag: etag, "Cache-Control": "no-cache" });
+          return res.end();
+        }
+        const js = await fs.promises.readFile(arquivoJanela);
+        res.writeHead(200, {
+          "Content-Type": "application/javascript; charset=utf-8",
+          "Content-Length": js.length,
+          "Cache-Control": "no-cache",
+          ETag: etag,
+          "X-Content-Type-Options": "nosniff",
+        });
+        return res.end(js);
+      } catch {
+        return responder(res, 404, { erro: "Não encontrado." });
+      }
+    }
+
+    /* ==========================================================================
        O AVISO SONORO
 
        Servido daqui pelo mesmo motivo do cliente: uma troca de som chega a
