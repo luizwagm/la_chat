@@ -764,6 +764,68 @@ async function rodar() {
   }
 
   /* ======================================================================
+     O CLIENTE PRECISA SER JAVASCRIPT VÁLIDO
+
+     Parece a última coisa que precisaria de teste, e é a que faltava. Nenhuma
+     suíte executava o cliente: as de servidor buscam `/cliente.js` por HTTP e o
+     servidor só CONCATENA texto, sem opinar sobre o conteúdo; as de análise
+     estática leem os arquivos como string. Um erro de sintaxe passava por tudo
+     verde e só aparecia como tela em branco no navegador.
+
+     E ele acontece: o CSS mora num template literal, e uma CRASE dentro de um
+     comentário de CSS fecha a string no meio. Já ocorreu QUATRO vezes neste
+     projeto — sempre escrevendo `display: none` ou `inset: 0` entre crases,
+     por hábito de Markdown, dentro de um arquivo que não é Markdown.
+
+     `vm.Script` COMPILA sem executar: nada de DOM, nada de efeito colateral. É
+     exatamente a pergunta que interessa — "isto é programável?" — e nada além.
+     ====================================================================== */
+  P.secao("o cliente compila");
+
+  {
+    const vm = require("node:vm");
+    const fsC = require("node:fs");
+    const pathC = require("node:path");
+    const publicoC = pathC.join(__dirname, "..", "publico");
+
+    for (const arquivo of ["la-chat.js", "la-chat-video.js", "sala.js", "janela.js"]) {
+      let erro = null;
+      try {
+        new vm.Script(fsC.readFileSync(pathC.join(publicoC, arquivo), "utf8"),
+          { filename: arquivo });
+      } catch (e) { erro = e.message; }
+      P.ok(!erro, arquivo + " é JavaScript válido", erro || "");
+    }
+
+    /* E o que o navegador realmente recebe: os dois arquivos COLADOS, com a
+       emenda que o servidor faz. Cada um pode compilar sozinho e a junta
+       quebrar — uma linha terminada em comentário de barra dupla engoliria a
+       primeira do seguinte, que é o motivo de a emenda não ser vazia. */
+    const colado = [
+      fsC.readFileSync(pathC.join(publicoC, "la-chat.js"), "utf8"),
+      fsC.readFileSync(pathC.join(publicoC, "la-chat-video.js"), "utf8"),
+    ].join("\n;\n");
+
+    let erroColado = null;
+    try { new vm.Script(colado, { filename: "cliente.js" }); }
+    catch (e) { erroColado = e.message; }
+    P.ok(!erroColado, "e o cliente CONCATENADO também compila", erroColado || "");
+
+    /* A PROVA DE QUE O TESTE NÃO É VAZIO: a sabotagem é a crase de verdade,
+       posta onde ela sempre aparece — dentro de um comentário de CSS. */
+    let pegou = false;
+    try {
+      /* A crase e montada, e nao escrita: escrever uma crase literal aqui
+         fecharia o proprio literal que a contem. E essa e, textualmente, a
+         armadilha que este teste existe para pegar. */
+      const crase = String.fromCharCode(96);
+      new vm.Script("const CSS = " + crase + "\n/* uma " + crase + "crase" + crase
+        + " no meio */\n.a{}\n" + crase + ";");
+    } catch { pegou = true; }
+    P.ok(pegou, "e a trava ACUSA uma crase solta dentro do CSS");
+  }
+
+  /* ======================================================================
      `iniciar()` DEVOLVE O TRABALHO EM CURSO
 
      Duas chamadas simultâneas são o caso NORMAL: marcar `aberto` dispara
@@ -843,7 +905,10 @@ async function rodar() {
 
     /* ---- 2. entregar não é sair ---- */
     const iEnt = video7.indexOf("LaChat.prototype.entregarReuniao");
-    const entregar = iEnt < 0 ? "" : video7.slice(iEnt, iEnt + 1600);
+    /* A fatia precisa alcançar o FIM da função. Cortada curta demais, ela
+       "não encontra" o que está logo depois e o teste acusa uma ausência que é
+       só dela — foi o que aconteceu quando o corpo cresceu. */
+    const entregar = iEnt < 0 ? "" : video7.slice(iEnt, iEnt + 3200);
     P.ok(iEnt > 0, "existe a entrega da reunião");
     P.ok(!/\/sair/.test(entregar),
       "que NÃO avisa o servidor que saiu — sair encerraria a chamada a dois");
@@ -851,8 +916,18 @@ async function rodar() {
       "mas fecha as conexões desta aba");
     P.ok(entregar.includes("entregue = true"),
       "e marca a aba para ignorar a sinalização que ainda chega por ela");
+    P.ok(entregar.includes("postMessage"),
+      "e a fatia alcança o aviso à janela nova — senão a ordem abaixo mede o vazio");
     P.ok(entregar.indexOf("entregue = true") < entregar.indexOf("postMessage"),
       "e só DEPOIS disso libera a janela nova a entrar");
+
+    /* A aba entregue tem de voltar a ser um chat utilizável. A superfície da
+       reunião é absoluta sobre o painel: deixada visível, ela tapa a lista de
+       conversas e a caixa de escrever, e o chat parece ter morrido junto. */
+    P.ok(/el\.chamada\.hidden = true/.test(entregar),
+      "a superfície da reunião SOME da aba — senão ela tapa o chat");
+    P.ok(/pintarMensagens\(\)|pintarVazio\(\)/.test(entregar),
+      "e a conversa volta a ser desenhada");
 
     /* A marca precisa ser LIDA em algum lugar, ou não vale nada. */
     P.ok(/if \(v\.entregue/.test(video7),

@@ -1006,7 +1006,7 @@
 
       this.raiz.append(estilo, moldura, avisoSr);
 
-      this.el = { moldura, painel, barra, lista, cab, faixa, corpo, digitando, redator,
+      this.el = { moldura, painel, principal, barra, lista, cab, faixa, corpo, digitando, redator,
                   rodapeBarra, campoBusca, abas, avisoSr, pontoConexao: marca.querySelector("#pt-conexao") };
 
       this.montarRedator();

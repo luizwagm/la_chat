@@ -356,6 +356,22 @@ sobrar uma pessoa só: numa consulta a dois, a reunião morreria durante a próp
 transferência. A pessoa continua `dentro` o tempo todo; o que morre são as
 conexões daquela aba, e o lugar dela é segurado pelo socket que continua aberto.
 
+### A aba entregue continua sendo um chat
+
+O aviso de que a reunião está noutro lugar é uma **faixa de uma linha**, no fluxo
+da coluna — não uma sobreposição. A primeira versão cobria o painel inteiro e
+tapava lista, mensagens e caixa de escrever: na janela separada isso contradiz a
+funcionalidade, que existe justamente para libertar a aba.
+
+Na entrega, a superfície da reunião é **escondida e esvaziada**. Ela é absoluta
+sobre o painel; deixada visível, fica escura e vazia por cima do chat. A janela
+flutuante não precisa disso — lá o próprio elemento migra para o outro documento.
+
+A ação da faixa muda com o destino: **trazer de volta** para a flutuante (a
+reunião ainda mora aqui), **ir para a janela** para a separada (mudou de dono, e
+um botão prometendo desfazer seria mentira). Fechada a janela separada, a faixa
+some sozinha.
+
 A aba entregue marca `entregue = true` e passa a **ignorar a sinalização** que
 ainda chega por ela — o servidor publica para todas as conexões de uma pessoa, e
 sem isso a aba responderia às ofertas dirigidas à janela, com conexões que já

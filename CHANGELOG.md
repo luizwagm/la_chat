@@ -5,6 +5,55 @@ recurso, 3ª para correção. Nenhuma casa para no 9.
 
 ---
 
+## 0.24.1 — 24/08/2026 · o chat não para porque a reunião mudou de janela
+
+O aviso "a reunião está em outra janela" era uma **cortina de tela inteira** sobre
+o painel. Tapava a lista de conversas, as mensagens e a caixa de escrever.
+
+No caso da janela flutuante isso já era um estorvo. Na janela separada era a
+contradição da funcionalidade inteira: ela existe para **libertar a aba**, e a aba
+terminava trancada. Relato do usuário, e ele estava certo: *"não pode deixar o
+chat inativo — devo ter acesso ao chat e poder enviar mensagens para quem eu
+quiser"*.
+
+Agora é uma **faixa de uma linha**, no fluxo da coluna: ela empurra o cabeçalho
+para baixo em vez de cobrir nada. O chat continua inteiro embaixo — lista, busca,
+conversas, envio.
+
+E a superfície da reunião passou a ser **escondida e esvaziada** na entrega. Ela é
+absoluta sobre o painel; deixada visível, ficava ali escura e vazia, e o chat
+parecia ter morrido junto. A janela flutuante não tinha esse problema porque lá o
+próprio elemento é movido para o outro documento — `window.open` não move nada.
+
+### Duas ações, porque são duas situações
+
+| | ação na faixa |
+|---|---|
+| `⧉` flutuante | **Trazer de volta** — a reunião ainda mora aqui |
+| `↱` separada | **Ir para a janela** — mudou de dono; não há o que desfazer |
+
+E a faixa **some sozinha** quando a janela separada é fechada: apontar para uma
+janela que não existe é pior que não apontar para nada.
+
+### Uma trava que faltava: o cliente precisa compilar
+
+Nenhuma suíte executava o código do navegador. As de servidor buscam
+`/cliente.js` por HTTP, e o servidor só **concatena texto** sem opinar sobre o
+conteúdo; as de análise estática leem os arquivos como string. **Um erro de
+sintaxe passava por tudo verde** e só aparecia como tela em branco.
+
+E ele acontece: o CSS mora num template literal, e uma **crase** dentro de um
+comentário de CSS fecha a string no meio. Já ocorreu **quatro vezes** neste
+projeto — sempre por escrever `display: none` entre crases, por hábito de
+Markdown, num arquivo que não é Markdown.
+
+Agora `vm.Script` compila (sem executar) os quatro arquivos do navegador e
+também o resultado **colado**, que é o que o navegador recebe de verdade.
+
+**790 testes** verdes.
+
+---
+
 ## 0.24.0 — 24/08/2026 · a reunião numa janela que sobrevive à navegação
 
 Atender por vídeo e, ao mesmo tempo, abrir o prontuário e anotar. Até agora isso

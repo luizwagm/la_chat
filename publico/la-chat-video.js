@@ -149,20 +149,43 @@
   font-weight: 400;
 }
 
-/* O aviso que fica no lugar da reunião enquanto ela está na outra janela.
-   Sem ele, quem fechasse a janela de vista acharia que a reunião caiu. */
-.chamada-fora {
-  position: absolute; inset: 0; z-index: 20; display: grid; place-items: center;
-  background: #0d1117; color: #b9c0cc; text-align: center; padding: 24px;
+/* ==========================================================================
+   A REUNIÃO ESTÁ EM OUTRA JANELA — uma FAIXA, e não uma cortina
+
+   A primeira versão disto era uma sobreposição de tela inteira, com
+   inset:0 e fundo opaco. Fazia sentido enquanto o único destino era a
+   janela flutuante, onde a única ação possível é trazer de volta.
+
+   Estava errada, e o relato foi direto ao ponto: "fechei a janela e agora o
+   chat não aparece — não pode deixar o chat inativo". A cortina tapava a
+   lista de conversas, as mensagens e a caixa de escrever. No caso da janela
+   separada isso é pior que um estorvo, é a contradição da funcionalidade
+   inteira: ela existe para LIBERTAR a aba, e a aba terminava trancada.
+
+   Uma faixa de uma linha, no fluxo da coluna. Ela empurra o cabeçalho para
+   baixo em vez de cobrir alguma coisa — o chat continua inteiro embaixo, e
+   quem está numa reunião continua podendo escrever para outra pessoa.
+   ========================================================================== */
+.reuniao-fora {
+  display: flex; align-items: center; gap: 10px; flex: none;
+  padding: 8px 12px; background: #1c2431; border-bottom: 1px solid #2b3441;
+  color: #c9d1d9; font-size: 12.5px;
 }
-.chamada-fora[hidden] { display: none; }
-.chamada-fora b { display: block; color: #e8eaee; font-size: 15px; margin-bottom: 6px; }
-.chamada-fora p { margin: 0 0 16px; font-size: 13px; line-height: 1.5; max-width: 30ch; }
-.chamada-fora button {
-  background: #21262d; border: 1px solid #30363d; color: #e8eaee; border-radius: 9px;
-  padding: 9px 16px; font: inherit; font-size: 13px; cursor: pointer;
+.reuniao-fora[hidden] { display: none; }
+.reuniao-fora .pt {
+  width: 7px; height: 7px; border-radius: 50%; flex: none; background: #2ea043;
+  box-shadow: 0 0 0 3px rgba(46, 160, 67, .2);
 }
-.chamada-fora button:hover { background: #30363d; }
+/* Sem piscar. Um ponto pulsando ao lado do que a pessoa está escrevendo puxa
+   o olho a cada dois segundos, e ela não vai esquecer que está em reunião. */
+.reuniao-fora b { font-weight: 600; color: #e8eaee; }
+.reuniao-fora .txt { flex: 1; min-width: 0; }
+.reuniao-fora button {
+  background: #21262d; border: 1px solid #30363d; color: #e8eaee; border-radius: 7px;
+  padding: 5px 12px; font: inherit; font-size: 12px; font-weight: 600;
+  cursor: pointer; flex: none;
+}
+.reuniao-fora button:hover { background: #30363d; }
 
 /* ==========================================================================
    A GRADE
@@ -2783,6 +2806,7 @@
       return;
     }
 
+    this._janelaSeparada = janela;
     try { janela.focus(); } catch { }
 
     /* A partir daqui esta aba só espera ser chamada. Se a janela nova não
@@ -2856,9 +2880,27 @@
       v.entregue = true;
       v.chamada = null;
       v.participantes.clear();
+
+      /* ==================================================================
+         DEVOLVER A TELA À ABA
+
+         A superfície da reunião é `position: absolute; inset: 0` sobre o
+         painel. Sem esconder e esvaziar, ela fica ali — escura e vazia — por
+         cima da lista de conversas, e o chat parece ter morrido junto com a
+         reunião que mudou de janela.
+
+         A janela FLUTUANTE não precisa disto: lá o próprio elemento é movido
+         para o outro documento, e some da aba sozinho. Aqui ele fica, porque
+         `window.open` não move nó nenhum.
+         ================================================================== */
+      if (this.el.chamada) { this.el.chamada.hidden = true; limpar(this.el.chamada); }
     }
 
-    this.pintarChamada();
+    /* A conversa que estava aberta volta a ser desenhada: quem entregou a
+       reunião quer justamente usar o chat. */
+    if (this.estado.atual) this.pintarMensagens();
+    else { this.pintarCabecalho(); this.pintarVazio(); }
+
     this.mostrarAvisoDeEntrega();
 
     /* Só agora a janela nova pode entrar: as conexões daqui já morreram. */
@@ -2866,25 +2908,32 @@
   };
 
   LaChat.prototype.mostrarAvisoDeEntrega = function () {
-    if (!this.el.painel) return;
+    this.mostrarReuniaoNoutraJanela(true, "separada");
+    this.vigiarJanelaSeparada();
+  };
 
-    /* Reusa o aviso da janela flutuante — mesmo lugar, mesmo formato — com o
-       texto trocado, porque o que se pode fazer aqui é o OPOSTO. Lá a frase
-       é "procure a janela flutuante"; aqui é "pode ir embora desta aba". */
-    this.mostrarReuniaoNoutraJanela(true);
+  /* ------------------------------------------------------------------------
+     A FAIXA SOME QUANDO A JANELA FECHA
 
-    const caixa = this.el.chamadaFora;
-    if (!caixa) return;
-    const b = caixa.querySelector("b");
-    const p = caixa.querySelector("p");
-    const botao = caixa.querySelector("button");
-    if (b) b.textContent = "A reunião está na janela separada";
-    if (p) p.textContent = "Ela continua acontecendo lá, por conta própria. "
-      + "Esta aba está livre: abra o prontuário, anote, navegue à vontade.";
-    /* "Trazer de volta" não existe aqui. A reunião não está emprestada — ela
-       MUDOU de dono, e as conexões desta aba já foram fechadas. Um botão que
-       promete desfazer o que não se desfaz é pior que botão nenhum. */
-    if (botao) botao.hidden = true;
+     Fechar a janela é sair da reunião. Se a faixa continuasse na tela, ela
+     apontaria para uma janela que não existe — e o botão "ir para a janela"
+     não teria para onde ir.
+
+     Vigiar por relógio, e não por evento: a janela é outro contexto, e não há
+     aviso de fechamento que atravesse com garantia. Dois segundos é barato e
+     só roda enquanto há uma janela para vigiar.
+     ------------------------------------------------------------------------ */
+  LaChat.prototype.vigiarJanelaSeparada = function () {
+    clearInterval(this._olhoNaJanela);
+    this._olhoNaJanela = setInterval(() => {
+      const j = this._janelaSeparada;
+      if (j && !j.closed) return;
+      clearInterval(this._olhoNaJanela);
+      this._olhoNaJanela = null;
+      this.mostrarReuniaoNoutraJanela(false);
+      const v = this.video;
+      if (v) v.entregue = false;
+    }, 2000);
   };
 
   /* ==========================================================================
@@ -3234,26 +3283,61 @@
     if (v.chamada) this.pintarChamada();
   };
 
-  /* O aviso que ocupa o lugar da reunião na aba de origem. */
-  LaChat.prototype.mostrarReuniaoNoutraJanela = function (fora) {
-    if (!this.el.painel) return;
+  /* ------------------------------------------------------------------------
+     A FAIXA DA REUNIÃO QUE ESTÁ NOUTRO LUGAR
+
+     Dois destinos, duas ações diferentes, e a diferença importa:
+
+       flutuante — a reunião ainda MORA aqui; a janela só a exibe. "Trazer de
+                   volta" desfaz, e é a ação óbvia.
+       separada  — a reunião MUDOU de dono. Não há o que desfazer, e um botão
+                   prometendo isso seria mentira. O que resta é "ir para ela".
+
+     Em ambos os casos o chat continua inteiro embaixo.
+     ------------------------------------------------------------------------ */
+  LaChat.prototype.mostrarReuniaoNoutraJanela = function (fora, tipo = "flutuante") {
+    const dono = this.el.principal || this.el.painel;
+    if (!dono) return;
 
     if (!this.el.chamadaFora) {
-      const voltar = criar("button", {
-        type: "button", texto: "Trazer de volta",
-        onclick: () => this.fecharJanelaDaReuniao(),
-      });
-      this.el.chamadaFora = criar("div", { classe: "chamada-fora", hidden: "" }, [
-        criar("div", {}, [
-          criar("b", { texto: "A reunião está em outra janela" }),
-          criar("p", { texto: "Ela continua acontecendo. Procure a janela flutuante, ou traga de volta para cá." }),
-          voltar,
-        ]),
-      ]);
-      this.el.painel.appendChild(this.el.chamadaFora);
+      this.el.chamadaFora = criar("div", { classe: "reuniao-fora", hidden: "", role: "status" });
+      /* PRIMEIRO filho da coluna: a faixa empurra o cabeçalho para baixo em vez
+         de cobri-lo. Anexar no fim a deixaria embaixo da caixa de escrever, que
+         é onde ninguém olha. */
+      dono.insertBefore(this.el.chamadaFora, dono.firstChild);
     }
 
-    this.el.chamadaFora.hidden = !fora;
+    const caixa = this.el.chamadaFora;
+    caixa.hidden = !fora;
+    if (!fora) return;
+
+    limpar(caixa);
+    caixa.appendChild(criar("span", { classe: "pt" }));
+
+    if (tipo === "separada") {
+      caixa.appendChild(criar("div", { classe: "txt" }, [
+        criar("b", { texto: "Reunião em janela separada." }),
+        document.createTextNode(" Esta aba está livre."),
+      ]));
+      caixa.appendChild(criar("button", {
+        type: "button", texto: "Ir para a janela",
+        onclick: () => {
+          const j = this._janelaSeparada;
+          if (j && !j.closed) { try { j.focus(); } catch { } }
+          else this.mostrarFaixa("A janela da reunião foi fechada.", false);
+        },
+      }));
+      return;
+    }
+
+    caixa.appendChild(criar("div", { classe: "txt" }, [
+      criar("b", { texto: "Reunião em janela flutuante." }),
+      document.createTextNode(" Ela continua acontecendo."),
+    ]));
+    caixa.appendChild(criar("button", {
+      type: "button", texto: "Trazer de volta",
+      onclick: () => this.fecharJanelaDaReuniao(),
+    }));
   };
 
   /* ------------------------------------------------------------------------
