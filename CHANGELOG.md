@@ -5,6 +5,80 @@ recurso, 3ª para correção. Nenhuma casa para no 9.
 
 ---
 
+## 0.24.3 — 24/08/2026 · quem já negou a câmera tem saída
+
+Negar uma vez é o único caso que **trava de verdade**, e ele não tem diálogo para
+resolver: o navegador guarda a recusa por origem e **não pergunta mais**. Todo
+link de reunião abre com a câmera desligada, sem nada a clicar. A pessoa não fez
+nada de errado e não tem como desfazer.
+
+A tela dizia *"Câmera bloqueada neste navegador"* e parava aí. Agora diz **onde
+fica o interruptor** — o cadeado ao lado do endereço — e continua lembrando que
+dá para entrar assim mesmo, só com áudio, para ninguém desistir da consulta por
+causa de uma configuração.
+
+E **percebe sozinha quando o interruptor é ligado**. Quem segue a instrução mexe
+numa configuração do navegador, fora da página; sem isto ela libera a câmera,
+volta, e continua vendo "bloqueada", porque a página não tem como saber e ela não
+imagina que precisa recarregar. A API de permissões avisa a mudança, e a prévia
+abre na hora.
+
+### A pergunta que gerou isto: dá para liberar sem pedir?
+
+**Pelo site, não — e não deve dar.** Uma página não pode se auto-autorizar.
+
+**Pelo aparelho, sim**, e está documentado em `docs/SALAS.md`: as políticas
+`VideoCaptureAllowedUrls` e `AudioCaptureAllowedUrls` do Chrome/Edge
+pré-autorizam **uma origem** nas máquinas que a empresa administra, com a receita
+de registro e a observação de por que a flag `--use-fake-ui-for-media-stream`
+(que aparece em respostas de fórum) é outra coisa: ela aceita **qualquer** site,
+para sempre.
+
+Do lado do paciente não há como, e o melhor alcançável já está feito na 0.24.2:
+uma pergunta, uma vez, e o navegador lembrando daí em diante.
+
+**805 testes** verdes.
+
+---
+
+## 0.24.2 — 24/08/2026 · o navegador pergunta uma vez só
+
+Quem recebia um link de reunião era perguntado **duas vezes** pela câmera. O
+código dizia por quê: a prévia pedia `{ video: true, audio: false }` e a reunião,
+logo depois, pedia `{ audio: {…}, video: {…} }`. O microfone ficava fora do
+primeiro pedido, então o segundo tinha uma permissão **nova** a pedir — e o
+diálogo voltava com o anfitrião já esperando na tela.
+
+E entre os dois, a prévia **parava as trilhas**: a luz da câmera apagava e
+reacendia bem na hora de entrar, com meio segundo em que a pessoa aparecia como um
+retrato vazio para quem já estava lá. No celular, reabrir a câmera às vezes falha
+— e aí o piscar virava "entrei sem imagem".
+
+Agora é **um pedido só**, no instante em que o link abre, com as mesmas
+exigências que a reunião usaria. O fluxo conquistado ali é **entregue** à
+reunião: mesma câmera, mesmo microfone, sem parar nada. Verificado no navegador —
+com o fluxo pronto, `getUserMedia` é chamado **zero** vezes.
+
+O microfone chega **desligado** e só liga na entrada. A permissão é dada de uma
+vez, mas nada é captado enquanto a pessoa digita o nome e espera aprovação — ela
+não entrou em reunião nenhuma ainda.
+
+### O que continua sendo impossível
+
+**Dispensar a permissão.** Não existe cabeçalho, flag ou ajuste de servidor que
+faça um navegador entregar a câmera sem consentimento — e não deve existir. Sob
+HTTPS o navegador guarda a autorização por origem, então da segunda reunião em
+diante, no mesmo aparelho, não há diálogo nenhum.
+
+Para os computadores **da própria empresa** dá para chegar a zero: política de
+Chrome gerenciado (`VideoCaptureAllowedUrls` / `AudioCaptureAllowedUrls`)
+pré-autoriza uma origem nas máquinas que a empresa administra. Nunca no aparelho
+do paciente.
+
+**805 testes** verdes.
+
+---
+
 ## 0.24.1 — 24/08/2026 · o chat não para porque a reunião mudou de janela
 
 O aviso "a reunião está em outra janela" era uma **cortina de tela inteira** sobre

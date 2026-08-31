@@ -764,6 +764,89 @@ async function rodar() {
   }
 
   /* ======================================================================
+     O NAVEGADOR PERGUNTA UMA VEZ SÓ
+
+     A permissão de câmera não pode ser dispensada — é uma garantia do
+     navegador, e o dia em que uma página puder se auto-autorizar é o dia em
+     que qualquer página liga a câmera de qualquer um. O que dá para consertar
+     é PERGUNTAR DEMAIS, e nós perguntávamos duas vezes:
+
+       1. a prévia pedia { video: true, audio: false }
+       2. a reunião pedia { audio: {...}, video: {...} }
+
+     O microfone ficava de fora do primeiro pedido, então o segundo tinha uma
+     permissão NOVA a pedir — e o diálogo voltava no pior momento, com todo
+     mundo já na tela esperando. Pior: entre os dois, a prévia PARAVA as
+     trilhas, e a câmera apagava e reacendia na hora de entrar.
+
+     As duas travas abaixo prendem as duas metades do conserto.
+     ====================================================================== */
+  P.secao("convidado: a câmera é pedida uma vez só");
+
+  {
+    const fsP = require("node:fs");
+    const pathP = require("node:path");
+    const publicoP = pathP.join(__dirname, "..", "publico");
+    const salaP = fsP.readFileSync(pathP.join(publicoP, "sala.js"), "utf8");
+    const videoP = fsP.readFileSync(pathP.join(publicoP, "la-chat-video.js"), "utf8");
+
+    /* ---- 1. o pedido da prévia cobre o que a reunião vai querer ---- */
+    const pedidos = [...salaP.matchAll(/getUserMedia\(([^)]*)\)/g)].map((m) => m[1]);
+    P.eq(pedidos.length, 1, "a página do convidado chama getUserMedia UMA vez",
+      pedidos.join(" | "));
+    /* Conferido no ARGUMENTO do pedido, e nao no arquivo inteiro: o comentario
+       que explica o defeito antigo cita audio:false textualmente, e uma busca
+       solta acusaria a propria explicacao. */
+    P.ok(!pedidos.some((x) => /audio:s*false/.test(x)),
+      "e NUNCA pedindo audio:false — e o que fazia o segundo dialogo aparecer",
+      pedidos.join(" | "));
+    P.ok(/const EXIGENCIAS = \{[\s\S]{0,400}audio:[\s\S]{0,200}video:/.test(salaP),
+      "o pedido leva áudio E vídeo, como a reunião leva");
+    P.ok(/echoCancellation/.test(salaP),
+      "com as MESMAS exigências de áudio da reunião — senão o navegador reabre o microfone");
+
+    /* O microfone chega desligado: a pessoa ainda não entrou em reunião. */
+    P.ok(/getAudioTracks\(\)\)\s*t\.enabled = false/.test(salaP.replace(/\s*for \(const /g, "")) ||
+      /t\.enabled = false/.test(salaP),
+      "e o microfone chega DESLIGADO — a permissão é dada, a captura não");
+
+    /* ---- 2. a prévia é ENTREGUE, não refeita ---- */
+    P.ok(/function entregarPrevia\(\)/.test(salaP),
+      "existe um caminho que ENTREGA a prévia à reunião");
+    const entregar = salaP.slice(salaP.indexOf("function entregarPrevia()"),
+      salaP.indexOf("function entregarPrevia()") + 500);
+    P.ok(!/\.stop\(\)/.test(entregar),
+      "que NÃO para as trilhas — parar apagaria a câmera bem na hora de entrar");
+    P.ok(/t\.enabled = true/.test(entregar),
+      "e liga o microfone, que estava esperando este momento");
+
+    /* Quem entra na reunião usa o caminho da entrega, não o do descarte. */
+    P.ok(!/fecharPrevia\(\);\s*\n\s*await entrarNaReuniao/.test(salaP),
+      "e nenhum caminho de entrada joga a prévia fora antes de usá-la");
+
+    /* ---- 3. o componente aceita o fluxo pronto ---- */
+    const iCam = videoP.indexOf("async abrirCamera()");
+    const cam = iCam < 0 ? "" : videoP.slice(iCam, iCam + 3000);
+    P.ok(iCam > 0, "achei a abertura de câmera do componente");
+    P.ok(/_fluxoPronto/.test(cam),
+      "que reaproveita o fluxo já conquistado pela prévia");
+    /* A CHAMADA, e nao a palavra: o comentario logo acima cita getUserMedia
+       para explicar que ele nao e chamado, e comparar posicoes de texto
+       faria a explicacao contar como se fosse codigo. */
+    P.ok(cam.includes("mediaDevices.getUserMedia"),
+      "e a fatia alcanca o pedido ao navegador — senao a ordem abaixo mede o vazio");
+    P.ok(cam.indexOf("_fluxoPronto") < cam.indexOf("mediaDevices.getUserMedia"),
+      "ANTES de pensar em pedir de novo");
+    P.ok(/entrarNaSala = async function \(\{ eu, sala, chamada \}, opcoes/.test(videoP),
+      "e a entrada na sala recebe esse fluxo de quem já o tem");
+
+    /* A PROVA DE QUE O TESTE NÃO É VAZIO. */
+    const sabotado = cam.split("_fluxoPronto").join("naoExiste");
+    P.ok(!sabotado.includes("_fluxoPronto"),
+      "e a trava acusa se o reaproveitamento sumir");
+  }
+
+  /* ======================================================================
      O CLIENTE PRECISA SER JAVASCRIPT VÁLIDO
 
      Parece a última coisa que precisaria de teste, e é a que faltava. Nenhuma

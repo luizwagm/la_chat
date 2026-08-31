@@ -85,6 +85,23 @@
      ========================================================================== */
   let previa = null;
 
+  /* ==========================================================================
+     AS MESMAS EXIGÊNCIAS DA REUNIÃO — e é o ponto todo
+
+     Este objeto é uma cópia deliberada do que `abrirCamera` usa no componente.
+     Pedir aqui menos do que a reunião vai pedir depois é o que fazia o
+     navegador perguntar DUAS VEZES.
+
+     A primeira versão pedia `{ video: true, audio: false }`. O microfone ficava
+     de fora, e quando a reunião montava e pedia áudio, o navegador tinha uma
+     permissão NOVA para perguntar — no pior momento possível, com todo mundo
+     já na tela esperando.
+     ========================================================================== */
+  const EXIGENCIAS = {
+    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
+  };
+
   async function abrirPrevia() {
     const video = tel("previa-video");
     const aviso = tel("previa-aviso");
@@ -95,7 +112,19 @@
     }
 
     try {
-      previa = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      previa = await navigator.mediaDevices.getUserMedia(EXIGENCIAS);
+
+      /* ====================================================================
+         O MICROFONE VEM, MAS CHEGA DESLIGADO
+
+         Pedir o áudio agora é o que evita a segunda pergunta. Mas a pessoa
+         ainda não entrou em reunião nenhuma, e um microfone captando enquanto
+         ela digita o nome e espera aprovação não é o que ela concordou.
+
+         `enabled = false` corta a captura na origem: a trilha existe, a
+         permissão está dada, e não sai som. Quem entra liga de volta.
+         ==================================================================== */
+      for (const t of previa.getAudioTracks()) t.enabled = false;
       video.srcObject = previa;
       video.hidden = false;
       aviso.hidden = true;
@@ -103,19 +132,84 @@
       /* Negar a câmera NÃO impede de entrar — impede de ser visto. A frase
          precisa dizer isso, ou a pessoa desiste da reunião por um problema
          que não é da reunião. */
+      /* ====================================================================
+         "BLOQUEADA" É UM BECO SEM SAÍDA — a menos que se diga a saída
+
+         Quem nega uma vez NÃO É PERGUNTADO DE NOVO. O navegador guarda a
+         recusa por origem, e a partir daí todo link de reunião abre com a
+         câmera desligada e nenhum diálogo à vista. A pessoa não fez nada de
+         errado e não tem como desfazer: não há o que clicar.
+
+         Dizer onde fica o interruptor é a diferença entre "não funciona neste
+         celular" e trinta segundos de conserto. E a frase termina lembrando
+         que dá para entrar assim mesmo — senão ela desiste da consulta por
+         causa de uma configuração.
+         ==================================================================== */
       const negou = e?.name === "NotAllowedError" || e?.name === "SecurityError";
       aviso.textContent = negou
-        ? "Câmera bloqueada neste navegador. Você pode entrar mesmo assim — com áudio."
+        ? "Câmera bloqueada neste navegador. Para liberar, toque no cadeado ao "
+          + "lado do endereço e permita Câmera e Microfone. Você pode entrar "
+          + "mesmo assim — só com áudio."
         : "Nenhuma câmera encontrada. Você pode entrar mesmo assim — com áudio.";
     }
   }
 
+  /* ==========================================================================
+     O INTERRUPTOR FOI LIGADO — e a tela percebe sozinha
+
+     Quem seguiu a instrução acima mexe numa configuração DO NAVEGADOR, fora
+     da página. Sem isto, nada acontece: a pessoa libera a câmera, volta, e
+     continua vendo "bloqueada" — porque a página não tem como saber, e ela
+     não imagina que precisa recarregar.
+
+     A API de permissões avisa. O evento chega no instante em que o cadeado
+     muda, e a prévia abre sem recarregar nada.
+
+     Cada consulta vai no seu try porque nem todo navegador conhece os dois
+     nomes: 'microphone' falha em alguns, e uma exceção aqui derrubaria a
+     página do convidado inteira por causa de uma comodidade.
+     ========================================================================== */
+  async function vigiarPermissao() {
+    if (!navigator.permissions?.query) return;
+    for (const nome of ["camera", "microphone"]) {
+      try {
+        const estado = await navigator.permissions.query({ name: nome });
+        estado.onchange = () => {
+          if (estado.state === "granted" && !previa) abrirPrevia();
+        };
+      } catch { /* navegador que não conhece este nome: segue sem o atalho */ }
+    }
+  }
+
+  /* Desistiu, foi negado, deu errado: a câmera apaga. */
   function fecharPrevia() {
     if (!previa) return;
     for (const t of previa.getTracks()) { try { t.stop(); } catch { } }
     previa = null;
     const v = tel("previa-video");
     v.srcObject = null;
+  }
+
+  /* ==========================================================================
+     ENTREGAR A PRÉVIA À REUNIÃO — sem parar nada
+
+     A diferença para `fecharPrevia` é uma linha, e é a linha que importa:
+     aqui as trilhas NÃO param. É o mesmo fluxo, a mesma câmera, o mesmo
+     microfone — a reunião continua de onde a prévia estava.
+
+     Parar e pedir de novo funcionava, e cobrava caro: a luz da câmera apagava
+     e reacendia bem na hora de entrar, com um atraso de meio segundo em que a
+     pessoa aparecia como um retrato vazio para quem já estava lá. E no celular
+     reabrir a câmera às vezes falha, o que transformava um piscar em "entrei
+     sem imagem".
+     ========================================================================== */
+  function entregarPrevia() {
+    const fluxo = previa;
+    previa = null;
+    const v = tel("previa-video");
+    v.srcObject = null;
+    if (fluxo) for (const t of fluxo.getAudioTracks()) t.enabled = true;
+    return fluxo;
   }
 
   /* ==========================================================================
@@ -235,11 +329,12 @@
       dizer("fila-nome", r.eu?.nome || nome);
       if (r.sala?.titulo) dizer("fila-titulo", r.sala.titulo);
       mostrar("tela-fila");
+      /* A prévia continua viva durante a espera, de propósito: a pessoa se vê
+         enquadrada, e a permissão já está dada quando a aprovação chegar. */
       return esperarDecisao();
     }
 
-    fecharPrevia();
-    await entrarNaReuniao(r);
+    await entrarNaReuniao(r, entregarPrevia());
   });
 
   /* ==========================================================================
@@ -276,12 +371,11 @@
 
       if (r?.estado === "esperando") return esperarDecisao();
 
-      fecharPrevia();
-      await entrarNaReuniao(r);
+      await entrarNaReuniao(r, entregarPrevia());
     }, 2000);
   }
 
-  async function entrarNaReuniao(r) {
+  async function entrarNaReuniao(r, fluxoPronto) {
     mostrar("reuniao");
 
     componente = document.createElement("la-chat");
@@ -310,7 +404,9 @@
     }
 
     try {
-      await componente.entrarNaSala(r);
+      /* O fluxo já conquistado viaja junto. Sem ele o componente pede de novo,
+         e é aí que a segunda pergunta aparecia. */
+      await componente.entrarNaSala(r, { fluxo: fluxoPronto });
     } catch (e) {
       encerrar({ motivo: "erro", mensagem: e?.message || "A reunião não pôde ser aberta." });
     }
@@ -388,7 +484,7 @@
         return true;
       }
 
-      await entrarNaReuniao(r);
+      await entrarNaReuniao(r, entregarPrevia());
       return true;
     } catch {
       /* Qualquer recusa — cookie vencido, removido da sala, reunião encerrada
@@ -406,6 +502,7 @@
       dizer("recusa-msg", "Link inválido ou expirado.");
       return mostrar("tela-recusa");
     }
+    vigiarPermissao();
     if (await retomar()) return;
     conferir();
   })();

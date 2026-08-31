@@ -1,6 +1,6 @@
 {
   "name": "la-chat",
-  "version": "0.24.1",
+  "version": "0.24.3",
   "private": true,
   "description": "LA Chat — módulo de comunicação corporativa em tempo real, instalável nos sites do gerador (WebSocket, SQLite ou PostgreSQL, sem passo de build).",
   "main": "server.js",

@@ -284,6 +284,78 @@ script** (por isso o comportamento mora em `sala.js`, servido à parte),
 `frame-ancestors 'none'`, `object-src 'none'`, e `X-Robots-Tag: noindex` — um
 link de reunião no índice de busca é um link entregue a quem nunca o recebeu.
 
+### A permissão de câmera — uma vez, e só uma
+
+**Não dá para dispensar.** Nenhum cabeçalho, flag ou ajuste de servidor faz um
+navegador entregar a câmera sem o consentimento de quem está na frente dela — e o
+dia em que der, qualquer página liga a câmera de qualquer um. O que dá para
+consertar é **perguntar demais**, e nós perguntávamos duas vezes:
+
+| momento | pedido | efeito |
+|---|---|---|
+| abre o link | `{ video: true, audio: false }` | pergunta a câmera |
+| entra na reunião | `{ audio: {…}, video: {…} }` | pergunta **de novo**, pelo microfone |
+
+O microfone ficava fora do primeiro pedido, então o segundo tinha uma permissão
+**nova** a pedir — e o diálogo voltava no pior momento possível, com o anfitrião
+já esperando na tela. E entre os dois, a prévia **parava as trilhas**: a luz da
+câmera apagava e reacendia bem na hora de entrar.
+
+Agora o pedido é **um só**, no instante em que o link abre, com as mesmas
+exigências que a reunião usaria — e o fluxo conquistado ali é **entregue** à
+reunião, sem parar nada e sem pedir de novo.
+
+O microfone chega **desligado** (`track.enabled = false`) e só liga na entrada: a
+permissão é dada de uma vez, mas nada é captado enquanto a pessoa digita o nome e
+espera aprovação.
+
+> Sob **HTTPS** o navegador guarda a autorização por origem. Da segunda reunião em
+> diante, no mesmo aparelho, não há diálogo nenhum.
+
+### Zero diálogos, nas máquinas da própria empresa
+
+Existe, e não é gambiarra: o Chrome e o Edge têm uma política feita exatamente
+para isto. Ela pré-autoriza **uma origem**, e quem a define é o administrador da
+máquina — não a página.
+
+| política | o que faz |
+|---|---|
+| `VideoCaptureAllowedUrls` | libera a câmera para as origens listadas, sem perguntar |
+| `AudioCaptureAllowedUrls` | o mesmo para o microfone |
+
+No Windows, pelo registro (o administrador aplica; `1` é o primeiro item da
+lista, e pode haver `2`, `3`…):
+
+```
+HKLM\SOFTWARE\Policies\Google\Chrome\VideoCaptureAllowedUrls\1 = https://site-do-cliente.com
+HKLM\SOFTWARE\Policies\Google\Chrome\AudioCaptureAllowedUrls\1 = https://site-do-cliente.com
+```
+
+Para o Edge, o mesmo caminho trocando `Google\Chrome` por `Microsoft\Edge`. Em
+parque com domínio, o normal é aplicar por GPO em vez de registro máquina a
+máquina. Conferir depois em `chrome://policy`.
+
+**Só a origem listada é liberada** — é o que separa isto de desligar a proteção.
+A flag `--use-fake-ui-for-media-stream`, que às vezes aparece em respostas de
+fórum, faz outra coisa: aceita **qualquer** site que peça a câmera, naquele
+navegador, para sempre. É ferramenta de teste automatizado; numa máquina de
+trabalho é uma porta aberta.
+
+E vale para as máquinas que a empresa administra — **nunca** para o paciente,
+que está no aparelho dele. Do lado de fora, o melhor alcançável é o que já está
+feito: uma pergunta, uma vez, e o navegador lembrando daí em diante.
+
+### Quem já negou uma vez
+
+É o caso que trava de verdade, e não tem diálogo nenhum para resolver: o
+navegador guarda a recusa por origem e **não pergunta mais**. Todo link abre com
+a câmera desligada, e a pessoa não tem o que clicar.
+
+A tela diz onde fica o interruptor (o cadeado ao lado do endereço) e **percebe
+sozinha quando ele é ligado**: a API de permissões avisa a mudança, e a prévia
+abre sem recarregar. Sem isso, a pessoa libera a câmera, volta, e continua vendo
+"bloqueada" — porque a página não tem como saber.
+
 ### O link curto
 
 `site.com/call/<codigo>` é o que circula. Ele **redireciona** para dentro do

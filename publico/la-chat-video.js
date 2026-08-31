@@ -1249,6 +1249,30 @@
 
     async abrirCamera() {
       const v = this.video;
+
+      /* ==================================================================
+         A CÂMERA QUE JÁ ESTÁ ABERTA
+
+         Quem entra por link já passou pela prévia, e lá a permissão foi pedida
+         com as MESMAS exigências que esta função usaria. Pedir de novo não
+         mostraria outro diálogo — a permissão está dada —, mas apagaria e
+         reacenderia a câmera bem na hora de entrar, e no celular reabrir às
+         vezes falha.
+
+         Então: se veio fluxo pronto, é ele. `getUserMedia` nem é chamado.
+         ================================================================== */
+      if (this._fluxoPronto) {
+        v.local = this._fluxoPronto;
+        this._fluxoPronto = null;
+        v.camera = v.local.getVideoTracks().some((t) => t.enabled && t.readyState === "live");
+        v.microfone = v.local.getAudioTracks().some((t) => t.readyState === "live");
+        if (!v.camera) this.avisoDeVideo("Sua câmera não está disponível — você entrou só com áudio.");
+        await v.malha?.definirLocal(v.local);
+        v.detector?.acompanhar(this.estado.eu?.id, v.local);
+        this.pintarChamada();
+        return;
+      }
+
       try {
         v.local = await navigator.mediaDevices.getUserMedia({
           /* `echoCancellation` e `noiseSuppression` são o que separa uma
@@ -1940,7 +1964,10 @@
     }
   };
 
-  LaChat.prototype.entrarNaSala = async function ({ eu, sala, chamada }) {
+  LaChat.prototype.entrarNaSala = async function ({ eu, sala, chamada }, opcoes = {}) {
+    /* A câmera que a página do convidado já abriu. Reaproveitá-la é o que faz
+       o navegador perguntar UMA vez só — ver `abrirCamera`. */
+    if (opcoes.fluxo) this._fluxoPronto = opcoes.fluxo;
     this.estado.eu = eu;
     this.estado.conversas = [];
     this.sala = sala || null;
