@@ -5,6 +5,53 @@ recurso, 3ª para correção. Nenhuma casa para no 9.
 
 ---
 
+## 0.25.1 — 02/09/2026 · dois defeitos que não avisavam
+
+### 1. Um endereço de relay torto derrubava a chamada inteira
+
+No Instituto, a reunião não abria e o console dizia só isso:
+
+    Failed to construct 'RTCPeerConnection'
+
+Sem dizer qual endereço, sem mencionar configuração. A causa era o
+`COLE_AQUI` da própria documentação, que ficou literal no arquivo de ambiente —
+`{ urls: ["COLE_AQUI"] }` chega ao navegador e ele recusa construir a conexão.
+
+A conferência de subida existia **e não pegou**: ela só perguntava se a lista
+estava vazia, e `COLE_AQUI` não é vazio.
+
+Agora o endereço é conferido contra a única coisa que separa URL de texto solto
+— o esquema (`turn:`, `turns:`, `stun:`, `stuns:`):
+
+* **descartado** antes de chegar ao navegador, um a um: com um endereço bom e um
+  torto, só o bom segue — o torto não leva o relay que funciona junto;
+* **denunciado pelo nome** na subida, mostrando o valor recusado, porque em nove
+  de dez casos ele é um `COLE_AQUI` que se reconhece na hora;
+* e o cliente ganhou **segunda tranca**: filtra antes de construir e, se ainda
+  assim falhar, refaz a conexão **sem servidores** com um aviso legível. Uma
+  reunião degradada é melhor que uma exceção.
+
+### 2. O toque escolhido nunca era lido
+
+O Instituto continuou com o som da clínica mesmo com `CHAT_TOQUE=forte` no
+ambiente. O env estava certo o tempo todo; **o código é que nunca o leu**: a
+chave foi escrita dentro do objeto `limites`, virando `CONF.limites.toque`,
+enquanto o `/eu` lê `conf.toque`. Sempre respondia `padrao`.
+
+Nada quebrou, nada avisou — o som simplesmente não mudava.
+
+**E o teste passava.** Ele conferia só o caso PADRÃO, e `padrao` é a resposta
+certa mesmo com a ligação rompida. Um teste que só exercita o valor default de
+uma configuração é um teste que não pode falhar.
+
+A suíte agora sobe uma segunda instância **com `CHAT_TOQUE=forte`** e exige que a
+escolha atravesse até a tela. Verificado por sabotagem: devolvendo a chave para
+dentro de `limites`, o teste acusa.
+
+**829 testes** verdes.
+
+---
+
 ## 0.25.0 — 24/08/2026 · um toque por instalação
 
 Cada cliente do parque pode soar diferente. Não é enfeite: quem atende dois

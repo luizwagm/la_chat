@@ -59,6 +59,32 @@ const bool = (v, padrao) => (v === undefined || v === "" ? padrao : /^(1|true|si
 const lista = (v, padrao = []) => (v ? String(v).split(",").map((s) => s.trim()).filter(Boolean) : padrao);
 
 /* ==========================================================================
+   UM ENDEREÇO DE RELAY OU É VÁLIDO OU NÃO EXISTE
+
+   O navegador RECUSA construir uma RTCPeerConnection quando um dos
+   iceServers não tem forma de URL. E a recusa é uma exceção seca:
+
+       Failed to construct 'RTCPeerConnection'
+
+   Nenhuma pista de qual endereço, nenhuma menção a configuração. Do lado
+   de quem atende, a reunião simplesmente não abre.
+
+   O caso real que trouxe esta função foi o mais banal possível: o
+   COLE_AQUI da documentação ficou literal no arquivo de ambiente. A
+   verificação de subida existia e não pegou, porque ela só perguntava se a
+   lista estava VAZIA — e COLE_AQUI não é vazio.
+
+   O que se exige aqui é o mínimo que separa endereço de texto solto: o
+   esquema. Não é um analisador de RFC — é a pergunta que o navegador vai
+   fazer, feita antes, onde ainda dá para avisar quem pode consertar.
+   ========================================================================== */
+const ICE_VALIDO = /^(stuns?|turns?):[^\s?]+(\?transport=(udp|tcp))?$/i;
+const separarIce = (itens) => ({
+  bons: itens.filter((u) => ICE_VALIDO.test(u)),
+  ruins: itens.filter((u) => !ICE_VALIDO.test(u)),
+});
+
+/* ==========================================================================
    SEGREDOS
 
    Faltar segredo NÃO é motivo para subir com um padrão. É motivo para o
@@ -96,6 +122,25 @@ const CONF = {
 
   /* Endereço público do chat, usado para montar URL de arquivo e conferir
      Origin. Sem barra no fim, sempre — concatenar produz `//` de outro jeito. */
+  /* ==========================================================================
+     O TOQUE DE MENSAGEM, POR INSTALAÇÃO
+
+     Cada cliente do parque soa diferente, e não é enfeite: quem atende dois
+     sistemas na mesma mesa — a recepção da clínica e o Instituto — precisa
+     saber DE ONDE veio a mensagem sem olhar a tela.
+
+     O padrão é o som que já existe (o aviso.mp3): quem não escolher nada
+     continua ouvindo exatamente o que ouve hoje. Os outros são gerados no
+     navegador, sem arquivo nenhum.
+
+     FICA NO NÍVEL DE CIMA, e a primeira versão errou isto: escrito dentro de
+     `limites`, virava CONF.limites.toque, e o /eu — que lê conf.toque — sempre
+     respondia o padrão. O env da instância estava certo o tempo todo; o código
+     é que nunca o leu. Nada quebrou, nada avisou: o som simplesmente não
+     mudava.
+     ========================================================================== */
+  toque: String(process.env.CHAT_TOQUE || "padrao").trim().toLowerCase(),
+
   base: (process.env.CHAT_BASE || `http://127.0.0.1:${num(process.env.PORT, 5197)}`).replace(/\/+$/, ""),
 
   /* ==========================================================================
@@ -229,23 +274,6 @@ const CONF = {
        computador + celular + abas esquecidas, e trava quem abre mil sockets. */
     conexoesPorUsuario: num(process.env.CHAT_LIM_CONEXOES, 6),
 
-    /* ====================================================================
-       O TOQUE DE MENSAGEM, POR INSTALAÇÃO
-
-       Cada cliente do parque soa diferente, e isso não é enfeite: quem
-       atende em dois sistemas ao mesmo tempo — a recepção da clínica e o
-       Instituto, na mesma mesa — precisa saber DE ONDE veio a mensagem sem
-       olhar a tela.
-
-       O padrão é o som que já existe (o arquivo aviso.mp3), e é deliberado:
-       quem não escolher nada continua ouvindo exatamente o que ouve hoje.
-       Um valor novo nunca troca o som de quem já estava servido.
-
-       Os outros toques são GERADOS no navegador, sem arquivo nenhum — o
-       mesmo caminho do toque de chamada. Acrescentar um toque custa alguns
-       números, e não um arquivo a gravar, versionar e servir.
-       ==================================================================== */
-    toque: String(process.env.CHAT_TOQUE || "padrao").trim().toLowerCase(),
     /* Página de histórico. 50 enche uma tela alta com folga; o teto impede
        `?por=100000` de virar negação de serviço. */
     porPagina: num(process.env.CHAT_POR_PAGINA, 50),
@@ -302,11 +330,17 @@ const CONF = {
        banda. O padrão usa o servidor público do Google porque ele é gratuito e
        não recebe conteúdo nenhum — mas quem quiser autonomia total aponta para
        o próprio coturn, que também faz STUN. */
-    stun: lista(process.env.CHAT_STUN, ["stun:stun.l.google.com:19302"]),
+    /* Só os endereços com forma de URL seguem para o navegador. Os outros
+       ficam guardados em turnRuins/stunRuins, e a subida os denuncia pelo
+       nome — mandar um endereço inválido adiante quebraria TODA chamada, e
+       o defeito apareceria como uma exceção sem origem. */
+    stun: separarIce(lista(process.env.CHAT_STUN, ["stun:stun.l.google.com:19302"])).bons,
+    stunRuins: separarIce(lista(process.env.CHAT_STUN, [])).ruins,
 
     /* TURN: o relay para quando a conexão direta não fecha. Sem ele, de 15% a
        20% das chamadas falham — concentradas em rede corporativa. */
-    turn: lista(process.env.CHAT_TURN),
+    turn: separarIce(lista(process.env.CHAT_TURN)).bons,
+    turnRuins: separarIce(lista(process.env.CHAT_TURN)).ruins,
     turnSegredo: process.env.CHAT_TURN_SEGREDO || "",
     turnTtl: num(process.env.CHAT_TURN_TTL, 2 * 3600),
 

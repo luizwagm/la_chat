@@ -235,6 +235,29 @@ async function principal() {
 `);
   }
 
+  /* ======================================================================
+     ENDEREÇO DE RELAY COM FORMA ERRADA
+
+     Antes do aviso de TURN ausente, e mais alto que ele: aqui alguém TENTOU
+     configurar e errou, o que é diferente de não ter configurado. O texto
+     mostra o valor recusado, porque em nove de dez casos ele é um COLE_AQUI
+     que ficou para trás e se reconhece na hora.
+     ====================================================================== */
+  const iceRuins = [...(CONF.video.turnRuins || []), ...(CONF.video.stunRuins || [])];
+  if (CONF.video.ativo && iceRuins.length) {
+    console.warn(`
+  ⚠  ENDEREÇO DE RELAY INVÁLIDO — e foi DESCARTADO
+
+     ${iceRuins.map((u) => '"' + u + '"').join(", ")}
+
+     Falta o esquema (turn:, turns:, stun: ou stuns:). Mandado ao navegador,
+     ele derrubaria TODA chamada com "Failed to construct RTCPeerConnection"
+     — um erro que não diz qual endereço nem que existe configuração.
+
+     Confira CHAT_TURN e CHAT_STUN no ambiente desta instância.
+`);
+  }
+
   if (CONF.video.ativo && !CONF.video.turn.length) {
     console.warn(`
   ⚠  VÍDEO LIGADO SEM TURN

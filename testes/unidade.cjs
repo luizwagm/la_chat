@@ -764,6 +764,91 @@ async function rodar() {
   }
 
   /* ======================================================================
+     UM ENDEREÇO DE RELAY TORTO DERRUBA A CHAMADA INTEIRA
+
+     O navegador recusa construir a RTCPeerConnection quando um item de
+     iceServers não tem forma de URL, e a recusa é uma exceção seca:
+     "Failed to construct RTCPeerConnection". Não diz qual endereço, não
+     menciona configuração. Do lado de quem atende, a reunião não abre.
+
+     Aconteceu no Instituto, e da forma mais banal: o COLE_AQUI da
+     documentação ficou literal no arquivo de ambiente. A conferência de
+     subida existia e não pegou — ela só perguntava se a lista estava VAZIA,
+     e COLE_AQUI não é vazio.
+     ====================================================================== */
+  P.secao("relay: endereço inválido é descartado, não repassado");
+
+  {
+    const caminhoConf = require.resolve("../config.js");
+
+    /* O config é lido do ambiente na CARGA. Para exercitar dois ambientes
+       diferentes, ele é recarregado — e o estado anterior, esquecido. */
+    function comAmbiente(vars) {
+      const antes = {};
+      for (const k of Object.keys(vars)) { antes[k] = process.env[k]; process.env[k] = vars[k]; }
+      delete require.cache[caminhoConf];
+      let conf;
+      try { conf = require(caminhoConf).CONF; } finally {
+        for (const k of Object.keys(vars)) {
+          if (antes[k] === undefined) delete process.env[k]; else process.env[k] = antes[k];
+        }
+        delete require.cache[caminhoConf];
+      }
+      return conf;
+    }
+
+    const ruim = comAmbiente({
+      CHAT_VIDEO: "1", CHAT_TURN: "COLE_AQUI", CHAT_TURN_SEGREDO: "zz-qa",
+    });
+    P.eq(ruim.video.turn.length, 0,
+      "COLE_AQUI NÃO chega ao navegador", JSON.stringify(ruim.video.turn));
+    P.eq(ruim.video.turnRuins[0], "COLE_AQUI",
+      "mas fica guardado, para a subida poder denunciá-lo pelo nome");
+
+    const bom = comAmbiente({
+      CHAT_VIDEO: "1",
+      CHAT_TURN: "turn:chat.exemplo.com:3478,turns:chat.exemplo.com:5349",
+      CHAT_TURN_SEGREDO: "zz-qa",
+    });
+    P.eq(bom.video.turn.length, 2,
+      "endereço legítimo passa inteiro", JSON.stringify(bom.video.turn));
+    P.eq(bom.video.turnRuins.length, 0,
+      "e não sobra nada para denunciar");
+
+    /* O MEIO A MEIO é o caso perverso: um endereço bom e um torto. Sem
+       separar, o torto derruba a chamada mesmo havendo relay funcionando. */
+    const meio = comAmbiente({
+      CHAT_VIDEO: "1", CHAT_TURN: "turn:ok.exemplo.com:3478,COLE_AQUI",
+      CHAT_TURN_SEGREDO: "zz-qa",
+    });
+    P.eq(meio.video.turn.length, 1,
+      "com um bom e um torto, só o bom segue");
+    P.eq(meio.video.turnRuins.length, 1,
+      "e o torto é denunciado — sem levar o bom junto");
+
+    /* ---- e o cliente não estoura mesmo se receber lixo ---- */
+    const fsI = require("node:fs");
+    const pathI = require("node:path");
+    const videoI = fsI.readFileSync(
+      pathI.join(__dirname, "..", "publico", "la-chat-video.js"), "utf8");
+
+    const iPar = videoI.indexOf("    function par(id) {");
+    const par = iPar < 0 ? "" : videoI.slice(iPar, iPar + 1800);
+    P.ok(iPar > 0, "achei a criação do par na malha");
+    P.ok(/stuns\?\|turns\?/.test(par),
+      "o cliente filtra iceServers antes de construir — segunda tranca");
+    P.ok(/try \{[\s\S]{0,200}new RTCPeerConnection/.test(par),
+      "e a construção é protegida");
+    P.ok(/catch[\s\S]{0,300}new RTCPeerConnection\(\{ iceTransportPolicy/.test(par),
+      "com uma segunda tentativa SEM servidores — reunião degradada vence exceção");
+
+    /* A PROVA DE QUE O TESTE NÃO É VAZIO. */
+    const sabotado = par.split("stuns?|turns?").join("naoExiste");
+    P.ok(!/stuns\?\|turns\?/.test(sabotado),
+      "e a trava acusa se o filtro do cliente sumir");
+  }
+
+  /* ======================================================================
      CADA INSTALAÇÃO COM O SEU TOQUE
 
      Quem atende a clínica e o Instituto na mesma mesa precisa saber de ONDE

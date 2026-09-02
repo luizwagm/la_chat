@@ -310,6 +310,28 @@ async function rodar() {
          servido continua ouvindo o que ouvia. */
       P.ok(eu.dados.toque !== "forte" && eu.dados.toque !== "grave",
         "e nunca um toque novo por acidente");
+
+      /* ==================================================================
+         E AGORA O CASO QUE IMPORTA: UM TOQUE ESCOLHIDO CHEGA À TELA
+
+         A versão anterior deste teste conferia SÓ o padrão — e o padrão é a
+         resposta certa mesmo quando a ligação está quebrada. Ele passou verde
+         enquanto CHAT_TOQUE não era lido de lugar nenhum: a chave tinha sido
+         escrita dentro do objeto `limites`, e o /eu, que lê `conf.toque`,
+         nunca a encontrava.
+
+         O sintoma foi o Instituto continuar com o som da clínica. Nada
+         quebrou, nada avisou. Um teste que só exercita o valor padrão de uma
+         configuração é um teste que não pode falhar.
+         ================================================================== */
+      const outro = await subirChat({ porta: 5288, extra: { CHAT_TOQUE: "forte" } });
+      try {
+        const ana2 = await entrar(outro, { id: "tq-a", nome: "ZZ QA Toque" });
+        const eu2 = await ana2.vai("/eu");
+        P.eq(eu2.dados.toque, "forte",
+          "com CHAT_TOQUE=forte, o /eu responde forte — a escolha atravessa",
+          JSON.stringify(eu2.dados.toque));
+      } finally { await outro.derrubar(); }
     }
 
     P.secao("apagar e editar");

@@ -544,7 +544,31 @@
     function par(id) {
       if (pares.has(id)) return pares.get(id);
 
-      const pc = new RTCPeerConnection({ iceServers, iceTransportPolicy: politica });
+      /* ==================================================================
+         O NAVEGADOR RECUSA A CONEXÃO INTEIRA POR UM ENDEREÇO TORTO
+
+         Um item sem forma de URL em iceServers e o construtor estoura, sem
+         dizer qual. O servidor já filtra na subida; esta é a segunda tranca,
+         para o caso de um chat mais velho que a correção estar servindo a
+         configuração errada — e para que a mensagem seja acionável.
+         ================================================================== */
+      const limpos = (iceServers || []).filter((s) => {
+        const us = [].concat(s?.urls || []);
+        return us.length && us.every((u) => /^(stuns?|turns?):[^\s?]+/i.test(String(u)));
+      });
+
+      let pc;
+      try {
+        pc = new RTCPeerConnection({ iceServers: limpos, iceTransportPolicy: politica });
+      } catch (e) {
+        /* Sem servidores, o construtor volta a funcionar: a chamada perde o
+           relay, mas ACONTECE entre quem estiver na mesma rede. Uma reunião
+           degradada é melhor que uma exceção. */
+        pc = new RTCPeerConnection({ iceTransportPolicy: "all" });
+        aoErro?.(Object.assign(
+          new Error("A configuração do servidor de relay está inválida — a chamada seguiu sem ele."),
+          { configuracaoDeRelayInvalida: true }));
+      }
       /* Educado = id menor. Determinístico, e os dois lados chegam a papéis
          OPOSTOS sem trocar mensagem nenhuma. */
       const p = {
