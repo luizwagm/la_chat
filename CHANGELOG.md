@@ -5,6 +5,61 @@ recurso, 3ª para correção. Nenhuma casa para no 9.
 
 ---
 
+## 0.25.0 — 24/08/2026 · um toque por instalação
+
+Cada cliente do parque pode soar diferente. Não é enfeite: quem atende dois
+sistemas na mesma mesa — a recepção da clínica e o Instituto — precisa saber
+**de onde** veio a mensagem sem olhar a tela.
+
+```bash
+CHAT_TOQUE=forte    # no /etc/lachat-<inst>.env
+```
+
+| toque | o que é |
+|---|---|
+| `padrao` | o `aviso.mp3` — **o som de sempre**, e o que vale se ninguém escolher |
+| `forte` | três blips subindo, onda quadrada; atravessa recepção barulhenta |
+| `grave` | duas batidas baixas, para quem achar o forte estridente |
+
+**Quem não escolher nada continua ouvindo exatamente o que ouve hoje.** É a
+metade do pedido que não dá sinal quando quebra, e por isso tem trava própria na
+suíte: o BemEstarClinic não muda.
+
+### Gerados, não baixados
+
+Os toques novos são receitas de osciladores — o mesmo caminho do toque de
+chamada. Sem arquivo para gravar, versionar, servir e ver a CSP do hospedeiro
+bloquear. Acrescentar um toque custa uma linha de números.
+
+### Os números são medidos
+
+Renderizados num `OfflineAudioContext` e comparados com o arquivo de hoje
+**tocado como ele é tocado**:
+
+| | pico | RMS soando |
+|---|---|---|
+| hoje (`aviso.mp3` × 2,2) | 1,00 **(ceifado)** | 0,199 |
+| `forte` | 0,97 | 0,177 |
+| `grave` | 0,97 | 0,142 |
+
+Mesma altura do som de hoje, e sem ceifar. O primeiro ajuste ficou em pico 0,51
+— **metade** do de hoje, longe de "forte e alto". Só apareceu porque foi medido.
+
+### Uma descoberta pelo caminho
+
+O comentário de `tocarArquivo` afirmava que o `aviso.mp3` tem pico **0,43**, e
+justificava o ganho 2,2 por isso (0,43 × 2,2 = 0,94, perto do teto sem estourar).
+O arquivo que está no repositório hoje tem pico **1,001** — medido. Com 2,2 ele
+**ceifa**, e daí vem parte da aspereza.
+
+Mantido assim de propósito: é o som que a clínica já usa e reconhece, e limpá-lo
+seria mudar o toque de quem não pediu. O comentário foi corrigido para dizer o
+que se mede, em vez do que se supunha.
+
+**817 testes** verdes.
+
+---
+
 ## 0.24.3 — 24/08/2026 · quem já negou a câmera tem saída
 
 Negar uma vez é o único caso que **trava de verdade**, e ele não tem diálogo para
@@ -1740,7 +1795,7 @@ que conferir em cada caso.
 
 ### Crase dentro de aspas duplas
 
-`verde "o \`map\` de Upgrade está carregado"` — em shell, crase dentro de aspas
+`verde "o `map` de Upgrade está carregado"` — em shell, crase dentro de aspas
 duplas é **execução de comando**. O relatório saiu com
 `map: command not found` e a palavra sumiu da frase. As duas ocorrências eram as
 únicas do arquivo; nas mensagens, marcação de texto e shell não se misturam.

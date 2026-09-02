@@ -291,6 +291,10 @@ function criarServico({ repos, conf, barramento, limites, armazenamento, sessoes
              lugar só. */
           janelaEdicaoMs: JANELA_EDICAO_MS,
         },
+        /* O toque desta INSTALAÇÃO, e não desta pessoa: é o que faz o chat
+           do Instituto soar diferente do da clínica na mesma mesa. Vem do
+           servidor porque só ele sabe em qual instância está rodando. */
+        toque: conf.toque || "padrao",
       };
     },
 

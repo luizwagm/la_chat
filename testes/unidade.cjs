@@ -764,6 +764,56 @@ async function rodar() {
   }
 
   /* ======================================================================
+     CADA INSTALAÇÃO COM O SEU TOQUE
+
+     Quem atende a clínica e o Instituto na mesma mesa precisa saber de ONDE
+     veio a mensagem sem olhar a tela. E quem não escolher nada continua
+     ouvindo exatamente o que ouve hoje — essa é a metade do pedido que não
+     dá sinal quando quebra.
+     ====================================================================== */
+  P.secao("cliente: o toque escolhido é o que soa");
+
+  {
+    const fsT = require("node:fs");
+    const pathT = require("node:path");
+    const nucleoT = fsT.readFileSync(
+      pathT.join(__dirname, "..", "publico", "la-chat.js"), "utf8");
+
+    P.ok(/const TOQUES = \{/.test(nucleoT),
+      "o cliente conhece um conjunto de toques");
+    P.ok(/forte:/.test(nucleoT), "entre eles o FORTE, pedido para o Instituto");
+
+    /* Gerado, não baixado: um arquivo por toque seria um recurso a servir,
+       a versionar e que a CSP do hospedeiro pode barrar. */
+    P.ok(!/TOQUES\s*=\s*\{[\s\S]{0,600}\.mp3/.test(nucleoT),
+      "e nenhum deles é um arquivo — são receitas de osciladores");
+
+    /* A ORDEM É O PONTO. O preset tem de vencer o arquivo já baixado: sem
+       isso, uma instalação que pediu outro som volta a tocar o padrão assim
+       que o mp3 chega, e o defeito depende de quem responde primeiro. */
+    const iToc = nucleoT.indexOf("    tocar() {");
+    const tocar = iToc < 0 ? "" : nucleoT.slice(iToc, iToc + 1200);
+    P.ok(iToc > 0, "achei o disparo do som");
+    P.ok(tocar.includes("TOQUES[this.perfil]"),
+      "que consulta o toque desta instalação");
+    P.ok(tocar.includes("this.buffer"),
+      "e a fatia alcança o caminho do arquivo — senão a ordem abaixo mede o vazio");
+    P.ok(tocar.indexOf("TOQUES[this.perfil]") < tocar.indexOf("this.buffer"),
+      "ANTES do arquivo — o escolhido vence o que já estava baixado");
+
+    /* O padrão é o arquivo, e continua sendo. */
+    P.ok(/perfil: "padrao"/.test(nucleoT),
+      "e o padrão de fábrica é o som de sempre");
+    P.ok(/som\.usarPerfil\(eu\.toque\)/.test(nucleoT),
+      "a escolha chega do servidor, no /eu");
+
+    /* A PROVA DE QUE O TESTE NÃO É VAZIO. */
+    const sabotado = tocar.split("TOQUES[this.perfil]").join("naoExiste");
+    P.ok(!sabotado.includes("TOQUES[this.perfil]"),
+      "e a trava acusa se a escolha deixar de ser consultada");
+  }
+
+  /* ======================================================================
      O NAVEGADOR PERGUNTA UMA VEZ SÓ
 
      A permissão de câmera não pode ser dispensada — é uma garantia do

@@ -289,6 +289,29 @@ async function rodar() {
     P.eq(b6.dados.mensagens.length, 0, "quem não participa NÃO acha a mensagem");
 
     /* ==================================================================== */
+    /* ====================================================================
+       O TOQUE É DA INSTALAÇÃO, E VEM DO SERVIDOR
+
+       O mesmo código serve a clínica e o Instituto. Quem sabe em qual
+       instância está rodando é o servidor — o site hospedeiro não tem como
+       declarar isso sem repetir configuração, e repetir configuração entre
+       dois lados de um limite é como se perde a segunda metade.
+       ==================================================================== */
+    P.secao("o toque desta instalação");
+
+    {
+      const eu = await ana.vai("/eu");
+      P.eq(eu.dados.toque, "padrao",
+        "sem CHAT_TOQUE, o /eu responde o padrão — o som de sempre",
+        JSON.stringify(eu.dados.toque));
+
+      /* Quem não escolheu nada NÃO PODE ter o som trocado. É a metade do
+         pedido que ninguém percebe se quebrar: o cliente que já estava
+         servido continua ouvindo o que ouvia. */
+      P.ok(eu.dados.toque !== "forte" && eu.dados.toque !== "grave",
+        "e nunca um toque novo por acidente");
+    }
+
     P.secao("apagar e editar");
 
     const paraApagar = await ana.vai(`/conversas/${conversaId}/mensagens`, {

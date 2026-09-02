@@ -742,12 +742,60 @@
      primeira interação com a página), e fica decodificado na memória. Assim a
      mensagem que chega não espera download nenhum para soar.
      ========================================================================== */
+  /* ==========================================================================
+     OS TOQUES GERADOS
+
+     Nenhum arquivo: cada toque é uma receita de osciladores. É o mesmo
+     caminho do toque de chamada, e pelos mesmos motivos — nada a baixar,
+     nada que a política de segurança do site hospedeiro possa bloquear,
+     nada que atrase no pior momento.
+
+     Cada blip empilha a fundamental e a quinta. Duas ondas somadas soam
+     bem mais altas que uma no MESMO pico — e pico é o que o alto-falante
+     limita. É como ficar audível sem ceifar a onda e chiar.
+     OS PICOS SAO MEDIDOS, NAO ESTIMADOS. Renderizados num OfflineAudioContext
+     e comparados com o arquivo de hoje tocado como ele e tocado:
+
+       hoje (aviso.mp3 x2.2)   pico 1.00 (ceifado)   RMS 0.199
+       forte  pico=1.05        pico 0.97             RMS 0.177
+       grave  pico=1.15        pico 0.97             RMS 0.142
+
+     Mesma altura do som de hoje, e SEM ceifar. O campo pico e a soma das duas
+     ondas (cada uma sai em pico/2), entao ele passa de 1 sem que a soma passe;
+     acima de ~1.08 a soma estoura e o toque chia.
+     ========================================================================== */
+  const TOQUES = {
+    /* FORTE: três blips subindo, em onda quadrada. A quadrada tem
+       harmônicos que a senoide não tem, e são eles que atravessam conversa
+       de recepção e ventilador ligado. Curto de propósito: insistir é
+       trabalho do toque de CHAMADA; mensagem avisa e sai de cena. */
+    forte: { onda: "square", pico: 1.05, notas: [880, 1175, 1568], dura: 0.10, passo: 0.085 },
+
+    /* GRAVE: duas batidas baixas, para quem acha a versão acima estridente.
+       Some menos em ambiente barulhento do que uma senoide aguda. */
+    grave: { onda: "triangle", pico: 1.15, notas: [330, 262], dura: 0.16, passo: 0.14 },
+  };
+
   const som = {
     ctx: null,
     liberado: false,
     buffer: null,        // o toque decodificado, pronto para tocar
     baixando: false,
     url: null,           // definida pelo componente: <base>/aviso.mp3
+    /* Qual toque esta instalação usa. Chega do servidor no /eu; até chegar,
+       vale o padrão — e o padrão é o arquivo, que é o som de sempre. */
+    perfil: "padrao",
+
+    /* Trocar o toque em tempo de execução: o /eu chegou e disse qual é. */
+    usarPerfil(nome) {
+      const novo = String(nome || "padrao");
+      if (novo === this.perfil) return;
+      this.perfil = novo;
+      /* Quem usa toque gerado não precisa do arquivo. Se ele já veio, fica
+         na memória sem estorvar; o que importa é não pedir de novo. */
+      if (TOQUES[novo]) this.buffer = null;
+      else if (this.liberado && !this.buffer) this.carregar();
+    },
 
     liberar() {
       /* Chamado na primeira interação com a PÁGINA — que é a interação do
@@ -784,6 +832,12 @@
          exatamente quando o som mais importa — não soa. */
       if (this.ctx.state === "suspended") { try { this.ctx.resume(); } catch { } }
       try {
+        /* O toque escolhido vem PRIMEIRO. Sem esta linha, uma instalação
+           que pediu outro som continuaria tocando o arquivo padrão se ele
+           já tivesse sido baixado antes de o /eu responder. */
+        const receita = TOQUES[this.perfil];
+        if (receita) return this.tocarReceita(receita);
+
         if (this.buffer) return this.tocarArquivo();
         this.tocarBipe();
         this.carregar();     /* tenta de novo para a próxima mensagem */
@@ -794,14 +848,45 @@
       const fonte = this.ctx.createBufferSource();
       const vol = this.ctx.createGain();
       fonte.buffer = this.buffer;
-      /* ALTO, como foi pedido — e o ganho passa de 1 de propósito: o arquivo
-         do cliente tem pico em 0,43 da escala, então 1,0 sairia em menos da
-         metade do que o alto-falante consegue. 2,2 aproxima o pico do teto sem
-         estourar (0,43 × 2,2 = 0,94). Acima disso a onda ceifa e o toque
-         chia — mais volume que o material permite não existe. */
+      /* ALTO, como foi pedido. O ganho passa de 1 de propósito.
+
+         O RACIOCÍNIO ORIGINAL NÃO VALE MAIS PARA O ARQUIVO ATUAL, e fica
+         registrado porque a diferença importa: ele supunha um material com
+         pico em 0,43 da escala, onde 2,2 chegaria a 0,94 — perto do teto e sem
+         estourar. Medido em 24/08/2026, o aviso.mp3 que está no repositório tem
+         pico 1,001. Com 2,2 ele CEIFA, e é daí que vem parte da aspereza.
+
+         Mantido assim de propósito: é o som que a clínica já usa e reconhece, e
+         trocá-lo por um mais limpo seria mudar o toque de quem não pediu. Quem
+         quiser outro escolhe pelo CHAT_TOQUE, que não passa por aqui. */
       vol.gain.value = 2.2;
       fonte.connect(vol); vol.connect(this.ctx.destination);
       fonte.start();
+    },
+
+    /* ======================================================================
+       TOCAR UMA RECEITA
+
+       O ganho sobe por rampa, e não de uma vez: um degrau de amplitude é um
+       estalo — o alto-falante reproduz a borda, não a nota. Um milissegundo
+       de subida resolve, e é inaudível como atraso.
+       ====================================================================== */
+    tocarReceita(r) {
+      const inicio = this.ctx.currentTime;
+      r.notas.forEach((hz, n) => {
+        const t = inicio + n * r.passo;
+        for (const f of [hz, hz * 1.5]) {
+          const osc = this.ctx.createOscillator();
+          const vol = this.ctx.createGain();
+          osc.type = r.onda;
+          osc.frequency.setValueAtTime(f, t);
+          vol.gain.setValueAtTime(0.0001, t);
+          vol.gain.exponentialRampToValueAtTime(r.pico / 2, t + 0.006);
+          vol.gain.exponentialRampToValueAtTime(0.0001, t + r.dura);
+          osc.connect(vol); vol.connect(this.ctx.destination);
+          osc.start(t); osc.stop(t + r.dura + 0.02);
+        }
+      });
     },
 
     tocarBipe() {
@@ -1223,6 +1308,11 @@
         this.estado.preferencias = eu.preferencias;
         this.estado.limites = eu.limites;
         this.estado.statusManual = eu.statusManual || "online";
+        /* O toque desta instalacao. Vem aqui, e nao de um atributo da tag,
+           porque quem sabe em qual instancia o chat roda e o SERVIDOR: o mesmo
+           codigo serve a clinica e o Instituto, e o site hospedeiro nao tem
+           como declarar isso sem repetir configuracao. */
+        som.usarPerfil(eu.toque);
 
         await this.carregarConversas();
         this.pintarRodapeBarra();

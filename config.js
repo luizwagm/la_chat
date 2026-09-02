@@ -228,6 +228,24 @@ const CONF = {
        pelo mesmo IP, e limitar por IP derrubaria o escritório. 6 cobre
        computador + celular + abas esquecidas, e trava quem abre mil sockets. */
     conexoesPorUsuario: num(process.env.CHAT_LIM_CONEXOES, 6),
+
+    /* ====================================================================
+       O TOQUE DE MENSAGEM, POR INSTALAÇÃO
+
+       Cada cliente do parque soa diferente, e isso não é enfeite: quem
+       atende em dois sistemas ao mesmo tempo — a recepção da clínica e o
+       Instituto, na mesma mesa — precisa saber DE ONDE veio a mensagem sem
+       olhar a tela.
+
+       O padrão é o som que já existe (o arquivo aviso.mp3), e é deliberado:
+       quem não escolher nada continua ouvindo exatamente o que ouve hoje.
+       Um valor novo nunca troca o som de quem já estava servido.
+
+       Os outros toques são GERADOS no navegador, sem arquivo nenhum — o
+       mesmo caminho do toque de chamada. Acrescentar um toque custa alguns
+       números, e não um arquivo a gravar, versionar e servir.
+       ==================================================================== */
+    toque: String(process.env.CHAT_TOQUE || "padrao").trim().toLowerCase(),
     /* Página de histórico. 50 enche uma tela alta com folga; o teto impede
        `?por=100000` de virar negação de serviço. */
     porPagina: num(process.env.CHAT_POR_PAGINA, 50),
