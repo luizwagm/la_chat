@@ -1313,6 +1313,10 @@
            codigo serve a clinica e o Instituto, e o site hospedeiro nao tem
            como declarar isso sem repetir configuracao. */
         som.usarPerfil(eu.toque);
+        /* O arquivo do vídeo é outro escopo e não enxerga `som`. A escolha
+           fica no estado, que os dois alcançam — é assim que o toque de
+           CHAMADA também segue a instalação. */
+        this.estado.toque = eu.toque || "padrao";
 
         await this.carregarConversas();
         this.pintarRodapeBarra();

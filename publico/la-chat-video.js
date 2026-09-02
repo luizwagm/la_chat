@@ -450,31 +450,62 @@
      Se o navegador recusar o áudio (política de autoplay), o aviso VISUAL
      continua — o toque é reforço, nunca o único sinal.
      ========================================================================== */
+  /* ==========================================================================
+     OS TOQUES DE CHAMADA, POR INSTALAÇÃO
+
+     A mesma escolha que troca o som de mensagem (CHAT_TOQUE) troca este.
+     Não adianta o Instituto ter aviso de mensagem próprio e continuar
+     chamando igual à clínica: quem atende os dois na mesma mesa fica sem
+     saber de onde vem a chamada, que é justamente o momento em que a
+     pergunta é urgente.
+
+     O padrao reproduz EXATAMENTE o que existia — mesmas notas, mesmo ganho,
+     mesma cadência. Quem não escolher nada não ouve diferença nenhuma.
+
+     O ganho aqui é bem menor que o do aviso de mensagem, e é de propósito:
+     isto REPETE até alguém atender. Um toque alto que insiste vira motivo
+     para desligar o som do sistema inteiro.
+     ========================================================================== */
+  const TOQUES_CHAMADA = {
+    padrao: { onda: "sine", pico: 0.05, dura: 0.16, solta: 0.18, intervalo: 2600,
+              notas: [[0, 660], [0.18, 880]] },
+
+    /* Terça subindo, em quadrada: mesma família do aviso de mensagem forte,
+       para os dois sons do Instituto se reconhecerem como parentes. */
+    forte: { onda: "square", pico: 0.16, dura: 0.12, solta: 0.14, intervalo: 2200,
+             notas: [[0, 784], [0.15, 1047], [0.30, 1319]] },
+
+    grave: { onda: "triangle", pico: 0.22, dura: 0.20, solta: 0.24, intervalo: 2600,
+             notas: [[0, 330], [0.24, 262]] },
+  };
+
   const toque = {
     ctx: null, timer: null,
-    tocar() {
+    tocar(perfil) {
       try {
         const C = window.AudioContext || window.webkitAudioContext;
         if (!C) return;
         this.ctx = this.ctx || new C();
         if (this.ctx.state === "suspended") this.ctx.resume();
+
+        const r = TOQUES_CHAMADA[perfil] || TOQUES_CHAMADA.padrao;
         const bipe = () => {
           const t = this.ctx.currentTime;
-          for (const [atraso, hz] of [[0, 660], [0.18, 880]]) {
+          for (const [atraso, hz] of r.notas) {
             const o = this.ctx.createOscillator();
             const g = this.ctx.createGain();
-            o.type = "sine";
+            o.type = r.onda;
             o.frequency.setValueAtTime(hz, t + atraso);
             g.gain.setValueAtTime(0.0001, t + atraso);
-            g.gain.exponentialRampToValueAtTime(0.05, t + atraso + 0.01);
-            g.gain.exponentialRampToValueAtTime(0.0001, t + atraso + 0.16);
+            g.gain.exponentialRampToValueAtTime(r.pico, t + atraso + 0.01);
+            g.gain.exponentialRampToValueAtTime(0.0001, t + atraso + r.dura);
             o.connect(g); g.connect(this.ctx.destination);
-            o.start(t + atraso); o.stop(t + atraso + 0.18);
+            o.start(t + atraso); o.stop(t + atraso + r.solta);
           }
         };
         bipe();
         this.parar();
-        this.timer = setInterval(bipe, 2600);
+        this.timer = setInterval(bipe, r.intervalo);
       } catch { /* sem áudio: o aviso visual basta */ }
     },
     parar() { if (this.timer) { clearInterval(this.timer); this.timer = null; } },
@@ -1469,7 +1500,10 @@
       if (!v.recebendo) { alvo.hidden = true; toque.parar(); return; }
 
       alvo.hidden = false;
-      toque.tocar();
+      /* A escolha desta instalação, guardada pelo núcleo quando o /eu
+         respondeu. Ausente (chat velho, ou /eu ainda não voltou), o padrão
+         vale — e o padrão é o toque de sempre. */
+      toque.tocar(this.estado.toque);
 
       const quem = v.recebendo.participantes?.find((p) => p.id === v.recebendo.de);
       const nome = quem?.nome || "Alguém";

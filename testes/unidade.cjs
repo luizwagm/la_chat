@@ -849,6 +849,74 @@ async function rodar() {
   }
 
   /* ======================================================================
+     O TOQUE DE CHAMADA TAMBÉM SEGUE A INSTALAÇÃO
+
+     Não adianta o Instituto ter aviso de mensagem próprio e continuar CHAMANDO
+     igual à clínica: quem atende os dois na mesma mesa fica sem saber de onde
+     vem a chamada — justamente quando a pergunta é urgente.
+
+     E o padrao tem de ser IDÊNTICO ao que existia. Medido no navegador:
+     renderizadas as duas receitas num OfflineAudioContext, a maior diferença
+     amostra a amostra foi ZERO. Quem não escolher nada não ouve diferença.
+     ====================================================================== */
+  P.secao("cliente: o toque de CHAMADA segue a instalação");
+
+  {
+    const fsC = require("node:fs");
+    const pathC = require("node:path");
+    const publicoC = pathC.join(__dirname, "..", "publico");
+    const videoC = fsC.readFileSync(pathC.join(publicoC, "la-chat-video.js"), "utf8");
+    const nucleoC = fsC.readFileSync(pathC.join(publicoC, "la-chat.js"), "utf8");
+
+    /* Cada receita é recortada até o PRÓPRIO fecho. A primeira versão pegava
+       260 caracteres a partir do nome, e a fatia do forte invadia a do grave —
+       acusando uma cadência que era do vizinho. */
+    const receita = (nome) => {
+      const i = videoC.indexOf("    " + nome + ": {");
+      if (i < 0) return "";
+      const f = videoC.indexOf("},", i);
+      return f < 0 ? "" : videoC.slice(i, f + 2);
+    };
+
+    P.ok(/const TOQUES_CHAMADA = \{/.test(videoC),
+      "o toque de chamada virou um conjunto de receitas");
+
+    /* O PADRÃO NÃO PODE MUDAR: estes números são o toque que a clínica já
+       ouve, e mexer neles troca o som de quem não pediu. */
+    const padrao = receita("padrao");
+    P.ok(!!padrao, "existe o padrão");
+    P.ok(/onda: "sine"/.test(padrao), "em senoide, como sempre foi");
+    P.ok(/pico: 0\.05\b/.test(padrao), "com o mesmo ganho de 0,05");
+    P.ok(/intervalo: 2600/.test(padrao), "repetindo a cada 2600 ms");
+    P.ok(/\[0, 660\][\s\S]{0,20}\[0\.18, 880\]/.test(padrao),
+      "e as mesmas duas notas", padrao.replace(/\s+/g, " "));
+
+    /* O forte precisa ser OUTRO som, e não o mesmo mais alto. */
+    const forte = receita("forte");
+    P.ok(!!forte, "existe o forte");
+    P.ok(!/onda: "sine"/.test(forte), "com outra forma de onda");
+    P.ok(!/intervalo: 2600/.test(forte),
+      "e outra cadência — é outro toque, não o mesmo mais alto",
+      forte.replace(/\s+/g, " "));
+
+    /* A escolha precisa CHEGAR até aqui. O arquivo do vídeo é outro escopo e
+       não enxerga o objeto de som do núcleo; a ponte é o estado. */
+    P.ok(/toque\.tocar\(this\.estado\.toque\)/.test(videoC),
+      "e quem toca passa a escolha da instalação");
+    P.ok(/this\.estado\.toque = eu\.toque/.test(nucleoC),
+      "que o núcleo guardou quando o /eu respondeu");
+
+    /* Ausente, o padrão vale: chat velho, ou /eu que ainda não voltou. */
+    P.ok(/TOQUES_CHAMADA\[perfil\] \|\| TOQUES_CHAMADA\.padrao/.test(videoC),
+      "e sem escolha nenhuma, toca o de sempre");
+
+    /* A PROVA DE QUE O TESTE NÃO É VAZIO. */
+    const sabotado = videoC.split("this.estado.toque").join("naoExiste");
+    P.ok(!/toque\.tocar\(this\.estado\.toque\)/.test(sabotado),
+      "e a trava acusa se a escolha deixar de chegar ao toque de chamada");
+  }
+
+  /* ======================================================================
      CADA INSTALAÇÃO COM O SEU TOQUE
 
      Quem atende a clínica e o Instituto na mesma mesa precisa saber de ONDE

@@ -5,6 +5,54 @@ recurso, 3ª para correção. Nenhuma casa para no 9.
 
 ---
 
+## 0.26.0 — 02/09/2026 · o toque de chamada também segue a instalação
+
+A 0.25.0 deu som de mensagem próprio a cada cliente e **parou aí**. O toque de
+CHAMADA continuou fixo no código, igual nos dois — e não adianta o Instituto ter
+aviso de mensagem próprio e chamar igual à clínica: quem atende os dois na mesma
+mesa fica sem saber de onde vem a chamada, justamente quando a pergunta é
+urgente.
+
+Agora o mesmo `CHAT_TOQUE` governa os dois sons.
+
+| | onda | pico | repete |
+|---|---|---|---|
+| `padrao` | senoide, 660→880 | 0,050 | 2600 ms |
+| `forte` | quadrada, 784→1047→1319 | 0,156 | 2200 ms |
+| `grave` | triangular, 330→262 | 0,207 | 2600 ms |
+
+**O padrão é idêntico ao que existia.** Medido no navegador: renderizadas as duas
+receitas num `OfflineAudioContext`, a maior diferença amostra a amostra foi
+**zero**. Quem não escolher nada não ouve diferença nenhuma — e há trava na suíte
+prendendo cada número do padrão.
+
+O ganho do toque de chamada é bem menor que o do aviso de mensagem, e é de
+propósito: ele **repete** até alguém atender. Um toque alto que insiste vira
+motivo para desligar o som do sistema inteiro.
+
+### A ponte entre os dois arquivos
+
+`la-chat-video.js` é outro escopo e não enxerga o objeto de som do núcleo. A
+escolha viaja pelo estado do componente, guardada quando o `/eu` responde — e a
+trava confere as duas pontas, porque é exatamente o tipo de ligação que se rompe
+em silêncio.
+
+### Duas fatias curtas demais, de novo
+
+Dois testes desta rodada nasceram errados pelo mesmo motivo de sempre: recortar
+o código por contagem de caracteres. A fatia do `forte` invadia a do `grave` e
+acusava uma cadência que era do vizinho. Agora cada receita é recortada até o
+**próprio fecho**.
+
+E os regexes de um teste saíram **sem escape nenhum** — `node -e` atravessando o
+shell come as barras invertidas, e `/toque\.tocar\(...\)/` virou
+`/toque.tocar(...)/`, que casa quase tudo. Reescrito como arquivo, que é a lição
+que este projeto já aprendeu e eu repeti.
+
+**842 testes** verdes.
+
+---
+
 ## 0.25.1 — 02/09/2026 · dois defeitos que não avisavam
 
 ### 1. Um endereço de relay torto derrubava a chamada inteira
